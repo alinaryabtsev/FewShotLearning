@@ -1,0 +1,4 @@
+*.nii
+*.nii.gz
+.idea/
+*.pt

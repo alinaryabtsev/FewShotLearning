@@ -1,0 +1,12 @@
+[submodule "ADNet"]
+	path = ADNet
+	url = git@github.com:sha168/ADNet.git
+[submodule "RP-Net"]
+	path = RP-Net
+	url = git@github.com:uci-cbcl/RP-Net.git
+[submodule "UniverSeg"]
+	path = UniverSeg
+	url = git@github.com:JJGO/UniverSeg.git
+[submodule "ALPNet"]
+	path = ALPNet
+	url = https://github.com/cheng-01037/ALPNet.git
