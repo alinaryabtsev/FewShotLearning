@@ -11,11 +11,14 @@ import torch
 from torch.utils.data import Dataset
 from skimage.transform import resize
 from tqdm import tqdm
+import einops as E
 
 
 LIVER_LESIONS_DATASET = "/cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions"
 SCANS_FORMAT = "_scan.nii.gz"
 SEGMENTATIONS_FORMAT = "_seg.nii.gz"
+RESIZE_RESOLUTION = (128, 128)
+CLIP_VALUES_LIVER = (-150, 150)
 
 
 def preprocess_scan_and_segmentation(scan, segmentation):
@@ -25,17 +28,20 @@ def preprocess_scan_and_segmentation(scan, segmentation):
     :param segmentation: liver tumors segmentation
     :return: array (iterable) of tuples of scan and segmentation slices
     """
-    scan_data = nib.load(scan).get_fdata()
-    seg_data = nib.load(segmentation).get_fdata()
-    scan_data = np.clip(scan_data, -150, 150)
+    scan_data = nib.load(scan).get_fdata().astype(np.float32)
+    seg_data = nib.load(segmentation).get_fdata().astype(np.float32)
+    scan_data = np.clip(scan_data, *CLIP_VALUES_LIVER)
     scan_data = (scan_data - scan_data.min()) / (scan_data.max() - scan_data.min())
-    scan_data = resize(scan_data, (256, 256, scan_data.shape[2]))
-    seg_data = resize(seg_data, (256, 256, seg_data.shape[2]))
+    scan_data = resize(scan_data, (*RESIZE_RESOLUTION, scan_data.shape[2]))
+    seg_data = resize(seg_data, (*RESIZE_RESOLUTION, seg_data.shape[2]))
     seg_data = (seg_data >= 1).astype(seg_data.dtype)
-    scan_slices_ = np.split(scan_data, scan_data.shape[2], axis=2)
-    scan_slices = [np.rot90(s).copy() for s in scan_slices_]
-    seg_slices_ = np.split(seg_data, seg_data.shape[2], axis=2)
-    seg_slices = [np.rot90(s).copy() for s in seg_slices_]
+    scan_data = E.rearrange(scan_data, "H W D -> D H W")
+    seg_data = E.rearrange(seg_data, "H W D -> D H W")
+    seg_slices_ = np.split(seg_data, seg_data.shape[0], axis=0)
+    seg_slices_idx = [i for i, s in enumerate(seg_slices_) if np.sum(s) > 0]
+    seg_slices = [np.rot90(s, axes=(1, 2)).copy() for i, s in enumerate(seg_slices_) if i in seg_slices_idx]
+    scan_slices_ = np.split(scan_data, scan_data.shape[0], axis=0)
+    scan_slices = [np.rot90(s, axes=(1, 2)).copy() for i, s in enumerate(scan_slices_) if i in seg_slices_idx]
     return zip(scan_slices, seg_slices)  # [(slice1, seg_slice1), (slice2, seg_slice2), ...]
 
 
@@ -69,8 +75,7 @@ class LiverTumorsDataset(Dataset):
     def _split_indexes(self):
         rng = np.random.default_rng(42)
         N = len(self._data)
-        # p = rng.permutation(N)
-        p = range(N)  # TODO: remove this
+        p = rng.permutation(N)
         i = int(np.floor(self.support_frac * N))
         return {"support": p[:i], "query": p[i:]}[self.split]
 
