@@ -6,7 +6,6 @@ from glob import glob
 import os
 import numpy as np
 import nibabel as nib
-import PIL
 import torch
 from torch.utils.data import Dataset
 from skimage.transform import resize
@@ -18,7 +17,6 @@ SCANS_FORMAT = "_scan.nii.gz"
 SEGMENTATIONS_FORMAT = "_seg.nii.gz"
 RESIZE_RESOLUTION = (128, 128)
 CLIP_VALUES_LIVER = (-150, 150)
-import PIL
 
 def preprocess_scan_and_segmentation(scan, segmentation, split):
     """
@@ -34,13 +32,15 @@ def preprocess_scan_and_segmentation(scan, segmentation, split):
     scan_data = resize(scan_data, (*RESIZE_RESOLUTION, scan_data.shape[2]))
     seg_data = resize(seg_data, (*RESIZE_RESOLUTION, seg_data.shape[2]), order=0, preserve_range=True, anti_aliasing=False)
     seg_data = (seg_data >= 1).astype(seg_data.dtype)
-    scan_data = E.rearrange(scan_data, "H W D -> D H W")
-    seg_data = E.rearrange(seg_data, "H W D -> D H W")
+    scan_data = E.rearrange(scan_data, "H W D ->  1 D H W")
+    seg_data = E.rearrange(seg_data, "H W D ->  1 D H W")
     if split == "support":
-        seg_slices_ = np.split(seg_data, seg_data.shape[0], axis=0)
-        scan_slices_ = np.split(scan_data, scan_data.shape[0], axis=0)
+        seg_slices_ = np.split(seg_data, seg_data.shape[0], axis=1)
+        scan_slices_ = np.split(scan_data, scan_data.shape[0], axis=1)
         seg_slices_idx = [i for i, s in enumerate(seg_slices_) if np.sum(s) > 0]
+        # seg_data = np.squeeze(np.array([s for i, s in enumerate(seg_slices_) if i in seg_slices_idx]))
         seg_data = np.array([s for i, s in enumerate(seg_slices_) if i in seg_slices_idx])
+        # scan_data = np.squeeze(np.array([s for i, s in enumerate(scan_slices_) if i in seg_slices_idx]))
         scan_data = np.array([s for i, s in enumerate(scan_slices_) if i in seg_slices_idx])
     return [scan_data.copy(), seg_data.copy()]
 
