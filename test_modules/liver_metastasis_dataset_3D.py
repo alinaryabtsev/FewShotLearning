@@ -18,19 +18,21 @@ SEGMENTATIONS_FORMAT = "_seg.nii.gz"
 RESIZE_RESOLUTION = (128, 128)
 CLIP_VALUES_LIVER = (-150, 150)
 
-def preprocess_scan_and_segmentation(scan, segmentation, split):
+def preprocess_scan_and_segmentation(scan, segmentation, split, resize_sacn=True):
     """
     Given a scan and a segmentation, returns an array with tuples of scan and segmentation slices
     :param scan: scan with liver
-    :param segmentation: liver tumors segmentation
+    :param segmentation: liver tumors' segmentation
+    :param resize_sacn: a boolean to determine to resize the input scan or not.
     :return: array (iterable) of tuples of scan and segmentation slices
     """
     scan_data = nib.load(scan).get_fdata().astype(np.float32)
     seg_data = nib.load(segmentation).get_fdata().astype(np.float32)
     scan_data = np.clip(scan_data, *CLIP_VALUES_LIVER)
     scan_data = (scan_data - scan_data.min()) / (scan_data.max() - scan_data.min())
-    scan_data = resize(scan_data, (*RESIZE_RESOLUTION, scan_data.shape[2]))
-    seg_data = resize(seg_data, (*RESIZE_RESOLUTION, seg_data.shape[2]), order=0, preserve_range=True, anti_aliasing=False)
+    if resize_sacn:
+        scan_data = resize(scan_data, (*RESIZE_RESOLUTION, scan_data.shape[2]), order=0, preserve_range=True, anti_aliasing=False)
+        seg_data = resize(seg_data, (*RESIZE_RESOLUTION, seg_data.shape[2]), order=0, preserve_range=True, anti_aliasing=False)
     seg_data = (seg_data >= 1).astype(seg_data.dtype)
     scan_data = E.rearrange(scan_data, "H W D ->  D 1 H W")
     seg_data = E.rearrange(seg_data, "H W D ->  D 1 H W")
@@ -51,7 +53,7 @@ def preprocess_scan_and_segmentation(scan, segmentation, split):
     return [scan_data.copy(), seg_data.copy()]
 
 
-def load_scans(split, split_i, N, path=LIVER_LESIONS_DATASET):
+def load_scans(split, split_i, N, path=LIVER_LESIONS_DATASET, resize_scan=True):
     rng = np.random.default_rng(42)
     p = rng.permutation(N)
     data = []
@@ -69,7 +71,7 @@ def load_scans(split, split_i, N, path=LIVER_LESIONS_DATASET):
 
     with tqdm(total=total) as pbar:
         for scan, seg in iter_data():
-            data.append(preprocess_scan_and_segmentation(scan, seg, split))
+            data.append(preprocess_scan_and_segmentation(scan, seg, split, resize_scan))
             pbar.update(1)
     return data, list(iter_data())
 
@@ -80,6 +82,7 @@ class LiverTumorsDataset3D(Dataset):
     split: Literal["support", "query"]
     label: int
     support_frac: float = 0.7
+    resize_scan: bool = True
 
     def __post_init__(self):
         # arrange data: self.data = [(img1, seg1), (img2, seg2) ...]
@@ -88,7 +91,7 @@ class LiverTumorsDataset3D(Dataset):
         self.split_i = int(np.floor(self.support_frac * N))
 
         T = torch.from_numpy
-        scans_segs, scans_segs_names = load_scans(self.split, self.split_i, N, LIVER_LESIONS_DATASET)
+        scans_segs, scans_segs_names = load_scans(self.split, self.split_i, N, LIVER_LESIONS_DATASET, self.resize_scan)
         self._data = [(T(x), T(y)) for x, y in scans_segs]
         self._data_files = scans_segs_names
         self._idxs = range(len(scans_segs))
