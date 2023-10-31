@@ -11,7 +11,7 @@ SCANS_FORMAT = "_scan.nii.gz"
 SEGMENTATIONS_FORMAT = "_seg.nii.gz"
 RESIZE_RESOLUTION = (128, 128)
 
-LUNG_LESIONS_DATASET = "/cs/casmip/alina.ryabtsev/FewShotLearning/datasets/lung_lesions"
+LUNG_LESIONS_DATASET = "/cs/casmip/alina.ryabtsev/FewShotLearning/datasets/lungs_lesions"
 CLIP_VALUES_LUNGS = (-1000, 150)
 LIVER_LESIONS_DATASET = "/cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions"
 CLIP_VALUES_LIVER = (-150, 150)
@@ -46,6 +46,8 @@ def preprocess_scan_and_segmentation(scan, segmentation, split, scan_resize, cli
         else:  # if there is only one slice
             scan_data = E.rearrange(scan_data, "H W ->  1 1 H W")
             seg_data = E.rearrange(seg_data, "H W ->  1 1 H W")
+    scan_data = scan_data.astype(np.float16)
+    seg_data = seg_data.astype(np.uint8)
     return [scan_data.copy(), seg_data.copy()]
 
 
