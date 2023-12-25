@@ -17,7 +17,7 @@ LIVER_LESIONS_DATASET = "/cs/casmip/alina.ryabtsev/FewShotLearning/datasets/live
 CLIP_VALUES_LIVER = (-150, 150)
 
 
-def preprocess_scan_and_segmentation(scan, segmentation, split, scan_resize, clip_values):
+def preprocess_scan_and_segmentation(scan, segmentation, split, scan_resize, clip_values, half_precision=False):
     """
     Given a scan and a segmentation, returns an array with tuples of scan and segmentation slices
     :param scan: scan with liver
@@ -46,12 +46,13 @@ def preprocess_scan_and_segmentation(scan, segmentation, split, scan_resize, cli
         else:  # if there is only one slice
             scan_data = E.rearrange(scan_data, "H W ->  1 1 H W")
             seg_data = E.rearrange(seg_data, "H W ->  1 1 H W")
-    scan_data = scan_data.astype(np.float16)
-    seg_data = seg_data.astype(np.int16)
+    if half_precision:
+        scan_data = scan_data.astype(np.float16)
+        seg_data = seg_data.astype(np.int16)
     return [scan_data.copy(), seg_data.copy()]
 
 
-def load_scans(split, split_i, N, path, resize_scan=True):
+def load_scans(split, split_i, N, path, resize_scan=True, half_precision=False):
     rng = np.random.default_rng(42)
     p = rng.permutation(N)
     data = []
@@ -76,6 +77,6 @@ def load_scans(split, split_i, N, path, resize_scan=True):
 
     with tqdm(total=total) as pbar:
         for scan, seg in iter_data():
-            data.append(preprocess_scan_and_segmentation(scan, seg, split, resize_scan, clip_values))
+            data.append(preprocess_scan_and_segmentation(scan, seg, split, resize_scan, clip_values, half_precision))
             pbar.update(1)
     return data, list(iter_data())

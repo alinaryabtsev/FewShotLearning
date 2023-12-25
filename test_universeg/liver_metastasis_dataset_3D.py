@@ -16,6 +16,7 @@ class LiverTumorsDataset3D(Dataset):
     dataset_path: str = LIVER_LESIONS_DATASET
     support_frac: float = 0.7
     resize_scan: bool = True
+    half_precision: bool = False
 
     def __post_init__(self):
         # arrange data: self.data = [(img1, seg1), (img2, seg2) ...]
@@ -24,7 +25,8 @@ class LiverTumorsDataset3D(Dataset):
         self.split_i = int(np.floor(self.support_frac * N))
 
         T = torch.from_numpy
-        scans_segs, scans_segs_names = load_scans(self.split, self.split_i, N, self.dataset_path, self.resize_scan)
+        scans_segs, scans_segs_names = load_scans(self.split, self.split_i, N, self.dataset_path, self.resize_scan,
+                                                  self.half_precision)
         self._data = [(T(x), T(y)) for x, y in scans_segs]
         self._data_files = scans_segs_names
         self._idxs = range(len(scans_segs))
