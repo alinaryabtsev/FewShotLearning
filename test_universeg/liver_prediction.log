@@ -9,3 +9,51 @@
 21/11/2023 05:18:49 PM Started running liver prediction
 21/11/2023 05:20:59 PM Started running liver prediction
 21/11/2023 05:40:42 PM Started running liver prediction
+20/12/2023 06:15:53 PM Started running liver prediction
+21/12/2023 12:58:31 PM Started running liver prediction
+21/12/2023 01:15:02 PM Started running liver prediction
+21/12/2023 01:16:33 PM Started running liver prediction
+21/12/2023 02:30:48 PM Started running liver prediction
+21/12/2023 02:59:51 PM Started running liver prediction
+21/12/2023 06:33:12 PM Started running liver prediction
+21/12/2023 09:03:17 PM Started running liver prediction
+24/12/2023 11:24:36 AM Started running liver prediction
+24/12/2023 11:57:15 AM Started running liver prediction
+24/12/2023 12:52:29 PM Started running liver prediction
+24/12/2023 01:12:18 PM Started running liver prediction
+24/12/2023 04:08:46 PM Started running liver prediction
+25/12/2023 10:31:25 AM Started running liver prediction
+25/12/2023 10:34:33 AM Started running liver prediction
+25/12/2023 11:34:05 AM Started running liver prediction
+25/12/2023 11:35:04 AM Started running liver prediction
+25/12/2023 11:39:12 AM Started running liver prediction
+25/12/2023 11:40:53 AM Started running liver prediction
+25/12/2023 11:41:57 AM Started running liver prediction
+25/12/2023 11:42:29 AM Started running liver prediction
+25/12/2023 11:43:32 AM Started running liver prediction
+25/12/2023 11:43:36 AM Started running liver prediction
+25/12/2023 11:47:34 AM Started running liver prediction
+25/12/2023 11:49:31 AM Started running liver prediction
+25/12/2023 11:58:05 AM Started running liver prediction
+25/12/2023 12:00:56 PM Started running liver prediction
+25/12/2023 12:02:02 PM Started running liver prediction
+25/12/2023 12:16:06 PM Started running liver prediction
+25/12/2023 12:16:32 PM Started running liver prediction
+25/12/2023 12:21:40 PM Started running liver prediction
+25/12/2023 12:22:38 PM Started running liver prediction
+25/12/2023 12:23:06 PM Started running liver prediction
+25/12/2023 12:40:54 PM Started running liver prediction
+25/12/2023 12:41:52 PM Started running liver prediction
+25/12/2023 12:42:20 PM Started running liver prediction
+25/12/2023 12:57:01 PM finished inference of scan 1: /cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions/M_I_10_02_2020_scan.nii.gz
+25/12/2023 01:06:15 PM Started running liver prediction
+25/12/2023 01:20:53 PM finished inference of scan 1: /cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions/M_I_10_02_2020_scan.nii.gz
+25/12/2023 02:00:42 PM Started running liver prediction
+25/12/2023 02:05:02 PM Started running liver prediction
+25/12/2023 02:09:57 PM Started running liver prediction
+25/12/2023 02:24:38 PM finished inference of scan 1: /cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions/M_I_10_02_2020_scan.nii.gz
+25/12/2023 02:24:38 PM finished postprocessing of prediction 1: /cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions/M_I_10_02_2020_scan.nii.gz
+25/12/2023 02:47:40 PM finished inference of scan 2: /cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions/E_S_28_08_2018_scan.nii.gz
+25/12/2023 02:47:40 PM finished postprocessing of prediction 2: /cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions/E_S_28_08_2018_scan.nii.gz
+25/12/2023 03:00:26 PM finished inference of scan 3: /cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions/T_H_20_03_2019_scan.nii.gz
+25/12/2023 03:00:27 PM finished postprocessing of prediction 3: /cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions/T_H_20_03_2019_scan.nii.gz
