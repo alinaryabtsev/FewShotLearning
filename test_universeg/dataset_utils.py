@@ -73,7 +73,7 @@ def load_scans(split, split_i, N, path, resize_scan=True, half_precision=False):
     elif path == LUNG_LESIONS_DATASET:
         clip_values = CLIP_VALUES_LUNGS
     else:
-        raise ValueError("path dataset not specified")
+        raise ValueError("dataset path not specified")
 
     with tqdm(total=total) as pbar:
         for scan, seg in iter_data():
