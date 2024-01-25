@@ -64,6 +64,9 @@ def load_scans(split, split_i, N, path, resize_scan=True, half_precision=False):
     if split == "support":
         iter_data = lambda: zip(scans[:split_i], segmentations[:split_i])
         total = split_i
+    elif split == "query-support":
+        iter_data = lambda: zip(scans[:split_i], segmentations[:split_i])
+        total = split_i
     else:
         iter_data = lambda: zip(scans[split_i:], segmentations[split_i:])
         total = len(scans) - split_i
