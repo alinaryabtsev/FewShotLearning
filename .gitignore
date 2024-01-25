@@ -5,4 +5,4 @@
 datasets/
 *pycache
 *.pyc
-*/pycache
+*/*pycache*
