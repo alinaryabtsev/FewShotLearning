@@ -1,11 +1,10 @@
+import os
 import sys
-from typing import List
-
 sys.path.append("/cs/casmip/alina.ryabtsev/FewShotLearning/")
+from glob import glob
+from typing import List, Set, TypeVar
 import torch
 from torch import nn
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 from UniverSeg.universeg import universeg
 import itertools
 from liver_metastasis_dataset_3D import LiverTumorsDataset3D, LIVER_LESIONS_DATASET
@@ -13,30 +12,23 @@ from monai.inferers import SliceInferer, PatchInferer, SlidingWindowSplitter, In
 import einops as E
 import numpy as np
 from tqdm import tqdm
+from skimage.util import view_as_windows
 from skimage.transform import resize
 import nibabel as nib
 from skimage import measure
-sys.path.append("/cs/casmip/alina.ryabtsev/Tools")
 import logging
 from tqdm.contrib.logging import logging_redirect_tqdm
 import gc
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+T = TypeVar('T', torch.Tensor, np.ndarray)
 sys.path.append('UniverSeg')
 
 # PATCH_SIZE = (64, 64)  # old patch size
 PATCH_SIZE = (128, 128)
 K_SHOTS = 6
 HALF_PRECISION = False
-
-
-# Dice metric for measuring volume agreement
-def dice_score(y_pred: torch.Tensor, y_true: torch.Tensor) -> float:
-    y_pred = y_pred.long()
-    y_true = y_true.long()
-    intersection = torch.logical_and(y_true, y_pred)
-    if y_pred.sum() + y_true.sum() == 0:
-        return 1
-    return float(format(2. * intersection.sum() / (y_true.sum() + y_pred.sum()), '.3f'))
+RUN_WITH_FP_PATCHES = False
 
 
 def load_data(half_precision: bool = False) -> tuple[LiverTumorsDataset3D, LiverTumorsDataset3D]:
@@ -46,6 +38,8 @@ def load_data(half_precision: bool = False) -> tuple[LiverTumorsDataset3D, Liver
     """
     d_support = LiverTumorsDataset3D(split="support", support_frac=0.1, label=1, resize_scan=False,
                                      half_precision=half_precision)
+    # d_query = LiverTumorsDataset3D(split="query-support", support_frac=0.1, label=1, resize_scan=False,
+    #                                half_precision=half_precision)
     d_query = LiverTumorsDataset3D(split="query", support_frac=0.1, label=1, resize_scan=False,
                                    half_precision=half_precision)
     return d_support, d_query
@@ -65,41 +59,97 @@ def get_support_images(d_support: LiverTumorsDataset3D, K: int = 5) -> tuple[
     return support_images, support_labels, support_filenames
 
 
-def get_positive_patches_idx(masks: torch.Tensor) -> List[int]:
+def get_positive_patches_idx(masks: T) -> np.ndarray:
+    """
+    This function gets a mask and returns the indices of the positive patches - where a whole lesion is seen
+    :param masks: a tensor of masks
+    :return: a list of indices of positive patches
+    """
     # Label connected components in the mask
     positive_masks = []
     for i, mask in enumerate(masks):
-        mask = mask.cpu().numpy()
+        mask = mask.reshape((1, 128, 128))
+        if torch.is_tensor(mask):
+            mask = mask.cpu().detach().numpy()
         labels = measure.label(mask, background=0)
-
-        # # Create an empty mask to store the connected components not on the boundaries
-        # result_mask = np.zeros_like(mask)
-
         # Loop through each labeled region
-        for region in measure.regionprops(labels):
-            # Check if the bounding box is entirely within the mask boundaries
-            if all(point > 0 and point < size for point, size in zip(region.bbox[1:3] + region.bbox[4:], PATCH_SIZE*2)):
-                # Draw the region on the result mask
-                # result_mask[labels == region.label] = 1
-                if region.area > 30:
-                    positive_masks.append(i)
+        if np.any(labels):
+            for region in measure.regionprops(labels):
+                # Check if the bounding box is entirely within the mask boundaries
+                if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])):
+                    # check if region is bigger than some minimal area threshold
+                    if region.area > 30:
+                        positive_masks.append(i)
+    return np.unique(positive_masks).astype(int)
 
-        # if result_mask.sum() != 0:
-        #     positive_masks.append(i)
 
-    return np.unique(positive_masks)
+def get_FP_patches(pred_filename, seg_filename, roi_filename, patch_size=(128, 128)):
+    """
+    This function gets a prediction and segmentation filenames and returns the patches that are FP.
+    :param pred_filename: the filename of the prediction
+    :param seg_filename: the filename of the segmentation
+    :param roi_filename: the filename of the ROI
+    :param patch_size: the size of the patches
+    :return: a list of FP patches
+    """
+    pred = nib.load(pred_filename).get_fdata()
+    seg = nib.load(seg_filename).get_fdata()
+    roi = nib.load(roi_filename).get_fdata()
+    roi = roi.astype(np.bool)
+    pred = pred.astype(np.bool)
+    seg = seg.astype(np.bool)
+    FP = np.logical_and(pred, np.logical_not(seg))
+    FP = np.logical_and(FP, roi)
+    FP_patches = view_as_windows(FP, (patch_size[0], patch_size[1], 1), step=(64, 64, 1))
+    FP_patches = np.concatenate(FP_patches, axis=0)
+    FP_patches = np.concatenate(FP_patches, axis=0)
+    # patches = np.array([x for x in FP_patches if np.any(x)])
+    patches = FP_patches[get_positive_patches_idx(FP_patches)]
+    patches = E.rearrange(patches, "D H W 1 -> D 1 H W")
+    return patches
+
+
+def get_support_set_FP_patches():
+    """
+    This function gets the support set and returns the FP patches from the support set
+    :return: support images and labels patches
+    """
+    support_predictions = glob(os.path.join(LIVER_LESIONS_DATASET, "*_pred_support.nii.gz"))
+    support_gt = [p.replace("_pred_support.nii.gz", "_seg.nii.gz") for p in support_predictions]
+    support_roi = [p.replace("_pred_support.nii.gz", "_liver.nii.gz") for p in support_predictions]
+    support_images_patches = torch.Tensor([]).to(device)
+    support_labels_patches = torch.Tensor([]).to(device)
+    for pred, gt, roi in zip(support_predictions, support_gt, support_roi):
+        FP_patches = get_FP_patches(pred, gt, roi)
+        FP_patches = torch.from_numpy(FP_patches).to(device)
+        support_images_patches = torch.cat((support_images_patches, FP_patches), dim=0)
+        support_labels_patches = torch.cat((support_labels_patches, torch.zeros_like(FP_patches)), dim=0)
+    return support_images_patches, support_labels_patches
 
 
 def get_support_patches(support_images: torch.Tensor, support_labels: torch.Tensor,
-                        patch_size: tuple[int, int] = (64, 64)) -> tuple[torch.Tensor, torch.Tensor]:
+                        patch_size: tuple[int, int] = (64, 64), FP_patches: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    This function gets the support scans and their labels and returns the patches that are positive
+    :param support_images: the support images
+    :param support_labels: the support labels
+    :param patch_size: the size of the patches
+    :param FP_patches: a boolean whether to add FP patches to the support set
+    :return: support images and labels patches
+    """
     splitter = SlidingWindowSplitter(patch_size=patch_size, overlap=0.5, device=device)
     # eliminate all negative patches
     images_patches = torch.concat([t[0] for t in splitter(support_images[0])]).to(device)
     labels_patches = torch.concat([t[0] for t in splitter(support_labels[0])]).to(device)
-    # positive_patches_idx = [i for i, l in enumerate(labels_patches) if l.sum() > 50]
     positive_patches_idx = get_positive_patches_idx(labels_patches)
-    labels_patches = labels_patches[positive_patches_idx].to(device)
     images_patches = images_patches[positive_patches_idx].to(device)
+    labels_patches = labels_patches[positive_patches_idx].to(device)
+
+    # add FP patches to support set:
+    if FP_patches:
+        support_FP_images, support_FP_labels = get_support_set_FP_patches()
+        images_patches = torch.cat((images_patches, support_FP_images))
+        labels_patches = torch.cat((labels_patches, support_FP_labels))
 
     return images_patches, labels_patches
 
@@ -108,6 +158,12 @@ def get_support_patches(support_images: torch.Tensor, support_labels: torch.Tens
 def inference_with_slice_inferer(inferer: Inferer, model_inferer: Inferer, model: nn.Module, image: torch.Tensor,
                                  label: torch.Tensor, support_images: torch.Tensor,
                                  support_labels: torch.Tensor) -> dict:
+    """
+    This function gets an image and label and infers on it with slice inference
+    :param inferer: the slice inferer
+    :param model_inferer: the patch inferer that wraps the model
+    :param model: the original universeg model
+    """
     image, label = image.to(device), label.to(device)
     # inference with Monai's slice inference
     logits = inferer(image, model_inferer, model, support_images[None], support_labels[None])
@@ -123,6 +179,14 @@ def inference_with_slice_inferer(inferer: Inferer, model_inferer: Inferer, model
 @torch.no_grad()
 def model_patches_inferer(image: torch.Tensor, model: nn.Module, support_images_patches: torch.Tensor,
                           support_labels_patches) -> Inferer:
+    """
+    This function gets an image and label and infers on it with patch inference
+    :param image: the image to infer on
+    :param model: the original universeg model
+    :param support_images_patches: support images patches
+    :param support_labels_patches: support labels patches
+    :return: the output prediction for the image
+    """
     patch_size = PATCH_SIZE
     splitter = SlidingWindowSplitter(patch_size=patch_size, overlap=0.5, device=device)
     patch_inferer = PatchInferer(splitter, batch_size=1, device=device)
@@ -180,7 +244,8 @@ def _extracted_from_main_10(model: nn.Module, d_support: LiverTumorsDataset3D, d
     """
     support_images, support_labels, support_filenames = get_support_images(d_support, K=K_SHOTS)
     support_images_patches, support_labels_patches = get_support_patches(support_images[None], support_labels[None],
-                                                                         patch_size=PATCH_SIZE)
+                                                                         patch_size=PATCH_SIZE,
+                                                                         FP_patches=RUN_WITH_FP_PATCHES)
     slice_inferer = SliceInferer(spatial_dim=0, roi_size=(512, 512), sw_batch_size=1, progress=True, device=device)
     total = len(d_query)
     with tqdm(total=total) as pbar:
@@ -188,6 +253,7 @@ def _extracted_from_main_10(model: nn.Module, d_support: LiverTumorsDataset3D, d
             for i, pack in enumerate(d_query):
                 image, label, filename = pack
                 image, label = image.to(device), label.to(device)
+                print(f"Inferring on {filename[0]}")
                 # inference with Monai's slice inference
                 image = torch.unsqueeze(image, dim=1).to(device)
                 res = inference_with_slice_inferer(slice_inferer, model_patches_inferer, model, image, label,
@@ -196,7 +262,7 @@ def _extracted_from_main_10(model: nn.Module, d_support: LiverTumorsDataset3D, d
                 hard_pred = res["Prediction"]
                 assert not torch.any(torch.isnan(hard_pred)), f"Prediction contains NaNs: {scan_name}"
                 logging.info(f"finished inference of scan {i + 1}: {scan_name}")
-                preprocess_prediction(hard_pred, seg_name, True, save_name=f"patches_k{K_SHOTS}", resize_scan=False)
+                preprocess_prediction(hard_pred, seg_name, True, save_name=f"pred_support", resize_scan=False)
                 logging.info(f"finished postprocessing of prediction {i + 1}: {scan_name}")
                 torch.cuda.empty_cache()
                 gc.collect()
