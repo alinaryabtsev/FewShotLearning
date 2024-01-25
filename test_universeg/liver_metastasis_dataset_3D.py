@@ -11,7 +11,7 @@ from dataset_utils import load_scans, SCANS_FORMAT, LIVER_LESIONS_DATASET
 @dataclass
 class LiverTumorsDataset3D(Dataset):
     """Creates a dataset from CASMIP's liver metastasis training set"""
-    split: Literal["support", "query"]
+    split: Literal["support", "query", "query-support"]
     label: int
     dataset_path: str = LIVER_LESIONS_DATASET
     support_frac: float = 0.7
