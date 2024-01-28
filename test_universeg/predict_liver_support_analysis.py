@@ -27,9 +27,91 @@ from scipy.stats import gaussian_kde
 from tqdm.contrib.logging import logging_redirect_tqdm
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-PATCH_SIZE=(128, 128)
 T = TypeVar('T', torch.Tensor, np.ndarray)
+PATCH_SIZE = (128, 128)
+MIN_LESION_AREA = 30
 np.random.seed(42)
+NUM_OF_SAMPLED_PATCHES = 250
+NUM_OF_FP_PATCHES = 75
+
+
+def get_FP_patches(pred_filename, seg_filename, roi_filename, patch_size=(128, 128)):
+    """
+    This function gets a prediction and segmentation filenames and returns the patches that are FP.
+    :param pred_filename: the filename of the prediction
+    :param seg_filename: the filename of the segmentation
+    :param roi_filename: the filename of the ROI
+    :param patch_size: the size of the patches
+    :return: a list of FP patches
+    """
+    pred = nib.load(pred_filename).get_fdata()
+    seg = nib.load(seg_filename).get_fdata()
+    roi = nib.load(roi_filename).get_fdata()
+    roi = roi.astype(bool)
+    pred = pred.astype(bool)
+    seg = seg.astype(bool)
+    FP = np.logical_and(pred, np.logical_not(seg))
+    FP = np.logical_and(FP, roi)
+    FP_patches = view_as_windows(FP, (patch_size[0], patch_size[1], 1), step=(64, 64, 1))
+
+    # take positive patches from FP_patches
+    FP_patches = np.concatenate(FP_patches, axis=0)
+    FP_patches = np.concatenate(FP_patches, axis=0)
+    # patches = np.array([x for x in FP_patches if np.any(x)])
+    patches = FP_patches[get_positive_patches_idx(FP_patches)]
+    patches = E.rearrange(patches, "N H W 1 -> N 1 H W")
+    return patches
+
+
+def get_support_set_FP_patches():
+    """
+    This function gets the support set and returns the FP patches from the support set0
+    :return: support images and labels patches
+    """
+    support_predictions = glob(os.path.join(LIVER_LESIONS_DATASET, "*support_FP_analysis.nii.gz"))
+    support_gt = [p.replace("support_FP_analysis.nii.gz", "seg.nii.gz") for p in support_predictions]
+    support_roi = [p.replace("support_FP_analysis.nii.gz", "liver.nii.gz") for p in support_predictions]
+    support_images_patches = torch.Tensor([]).to(device)
+    support_labels_patches = torch.Tensor([]).to(device)
+    for pred, gt, roi in zip(support_predictions, support_gt, support_roi):
+        FP_patches = get_FP_patches(pred, gt, roi)
+        FP_patches = torch.from_numpy(FP_patches).to(device)
+        support_images_patches = torch.cat((support_images_patches, FP_patches), dim=0)
+        support_labels_patches = torch.cat((support_labels_patches, torch.zeros_like(FP_patches)), dim=0)
+    return support_images_patches, support_labels_patches
+
+
+def get_lesions_areas(support_labels_patches):
+    leasions_areas = []
+    lesios_indices = []
+    for i, seg_patch in enumerate(support_labels_patches):
+        mask = seg_patch.cpu().detach().numpy()
+        labels = measure.label(mask, background=0)
+        for region in measure.regionprops(labels):
+            if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])) and \
+                    region.area > MIN_LESION_AREA:
+                leasions_areas.append(region.area)
+                lesios_indices.append(i)
+    return leasions_areas, lesios_indices
+
+
+def sample_lesions_from_their_distribution(lesions_areas, lesions_indices):
+    # Assuming your data is stored in a NumPy array called 'data_samples'
+    data_samples = np.array(lesions_areas)
+    # Create a kernel density estimate (KDE) from the data
+    kde = gaussian_kde(data_samples)
+    # Evaluate the PDF at the specified points
+    indices = np.array([], dtype=int)
+    num_samples = 150
+    while len(indices) < NUM_OF_SAMPLED_PATCHES and num_samples < len(data_samples):
+        drawn_samples = kde.resample(num_samples)
+        drawn_samples = np.squeeze(drawn_samples.reshape(-1, 1))
+        indices_from_samples = np.abs(data_samples[:, None] - drawn_samples).argmin(axis=0)
+        indices_from_samples = np.array(lesions_indices)[np.unique(indices_from_samples).astype(int)]
+        indices = np.concatenate((indices, indices_from_samples))
+        num_samples += 10
+    return indices
+
 
 def get_positive_patches_idx(masks: T) -> np.ndarray:
     # Label connected components in the mask
@@ -49,8 +131,9 @@ def get_positive_patches_idx(masks: T) -> np.ndarray:
                         positive_masks.append(i)
     return np.unique(positive_masks).astype(int)
 
+
 def get_support_patches(support_images: torch.Tensor, support_labels: torch.Tensor,
-                        patch_size: tuple[int, int] = (64, 64)) -> tuple[torch.Tensor, torch.Tensor]:
+                        patch_size: tuple[int, int] = (64, 64), FP_patches: bool = False) -> tuple[torch.Tensor, torch.Tensor]:
     splitter = SlidingWindowSplitter(patch_size=patch_size, overlap=0.5, device=device)
     # eliminate all negative patches
     images_patches = torch.concat([t[0] for t in splitter(support_images[0])]).to(device)
@@ -58,7 +141,14 @@ def get_support_patches(support_images: torch.Tensor, support_labels: torch.Tens
     positive_patches_idx = get_positive_patches_idx(labels_patches)
     images_patches = images_patches[positive_patches_idx].to(device)
     labels_patches = labels_patches[positive_patches_idx].to(device)
+
+    # add FP patches to support set:
+    if FP_patches:
+        support_FP_images, support_FP_labels = get_support_set_FP_patches()
+        images_patches = torch.cat((images_patches, support_FP_images[:NUM_OF_FP_PATCHES]))
+        labels_patches = torch.cat((labels_patches, support_FP_labels[:NUM_OF_FP_PATCHES]))
     return images_patches, labels_patches
+
 
 @torch.no_grad()
 def inference_with_slice_inferer(inferer: Inferer, model_inferer: Inferer, model: nn.Module, image: torch.Tensor,
@@ -123,34 +213,10 @@ def main():
     support_images = torch.cat(support_images, dim=0).to(device)
     support_labels = torch.cat(support_labels, dim=0).to(device)
     support_images_patches, support_labels_patches = get_support_patches(support_images[None], support_labels[None],
-                                                                         patch_size=PATCH_SIZE)
-    leasions_areas = []
-    lesios_indices = []
-    for i, seg_patch in enumerate(support_labels_patches):
-        mask = seg_patch.cpu().detach().numpy()
-        labels = measure.label(mask, background=0)
-        for region in measure.regionprops(labels):
-            if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])) and region.area > 30:
-                leasions_areas.append(region.area)
-                lesios_indices.append(i)
+                                                                         patch_size=PATCH_SIZE, FP_patches=True)
 
-    # Assuming your data is stored in a NumPy array called 'data_samples'
-    data_samples = np.array(leasions_areas)
-    # Create a kernel density estimate (KDE) from the data
-    kde = gaussian_kde(data_samples)
-    # Generate points along the x-axis for the PDF plot
-    x_vals = np.linspace(min(data_samples), max(data_samples), 1000)
-    # Evaluate the PDF at the specified points
-    pdf_values = kde(x_vals)
-    indices = np.array([], dtype=int)
-    num_samples = 150
-    while len(indices) < 150 and num_samples < len(data_samples):
-        drawn_samples = kde.resample(num_samples)
-        drawn_samples = np.squeeze(drawn_samples.reshape(-1, 1))
-        indices_from_samples = np.abs(data_samples[:, None] - drawn_samples).argmin(axis=0)
-        indices_from_samples = np.array(lesios_indices)[np.unique(indices_from_samples).astype(int)]
-        indices = np.concatenate((indices, indices_from_samples))
-        num_samples += 10
+    lesions_areas, lesions_indices = get_lesions_areas(support_labels_patches)
+    indices = sample_lesions_from_their_distribution(lesions_areas, lesions_indices)
 
     d_query = LiverTumorsDataset3D(split="query", support_frac=0.2, label=1, resize_scan=False)
     slice_inferer = SliceInferer(spatial_dim=0, roi_size=(512, 512), sw_batch_size=1, progress=True, device=device)
@@ -171,10 +237,11 @@ def main():
                 hard_pred = res["Prediction"]
                 assert not torch.any(torch.isnan(hard_pred)), f"Prediction contains NaNs: {scan_name}"
                 logging.info(f"finished inference of scan {i + 1}: {scan_name}")
-                preprocess_prediction(hard_pred, seg_name, True, save_name=f"support_analysis", resize_scan=False)
+                preprocess_prediction(hard_pred, seg_name, True, save_name=f"support_analysis_with_FP", resize_scan=False)
                 logging.info(f"finished postprocessing of prediction {i + 1}: {scan_name}")
                 torch.cuda.empty_cache()
                 pbar.update(1)
+
 
 
 if __name__ == '__main__':
