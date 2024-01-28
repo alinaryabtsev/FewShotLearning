@@ -6,3 +6,4 @@ datasets/
 *pycache
 *.pyc
 */*pycache*
+*/*.pyc
