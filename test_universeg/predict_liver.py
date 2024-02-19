@@ -95,9 +95,9 @@ def get_FP_patches(pred_filename, seg_filename, roi_filename, patch_size=(128, 1
     pred = nib.load(pred_filename).get_fdata()
     seg = nib.load(seg_filename).get_fdata()
     roi = nib.load(roi_filename).get_fdata()
-    roi = roi.astype(np.bool)
-    pred = pred.astype(np.bool)
-    seg = seg.astype(np.bool)
+    roi = roi.astype(bool)
+    pred = pred.astype(bool)
+    seg = seg.astype(bool)
     FP = np.logical_and(pred, np.logical_not(seg))
     FP = np.logical_and(FP, roi)
     FP_patches = view_as_windows(FP, (patch_size[0], patch_size[1], 1), step=(64, 64, 1))
@@ -150,6 +150,10 @@ def get_support_patches(support_images: torch.Tensor, support_labels: torch.Tens
         support_FP_images, support_FP_labels = get_support_set_FP_patches()
         images_patches = torch.cat((images_patches, support_FP_images))
         labels_patches = torch.cat((labels_patches, support_FP_labels))
+
+    print(f"Number of support patches: {len(images_patches)}")
+    if FP_patches:
+        print(f"Number of support FP patches: {len(support_FP_images)}")
 
     return images_patches, labels_patches
 
