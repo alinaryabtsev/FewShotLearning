@@ -13,15 +13,14 @@ from monai.inferers import SliceInferer, PatchInferer, SlidingWindowSplitter, In
 import einops as E
 from typing import TypeVar
 import numpy as np
-import matplotlib.pyplot as plt
 from tqdm import tqdm
-from collections import defaultdict
 from skimage.transform import resize
 from skimage import measure
 from skimage.util import view_as_windows
 from glob import glob
 import nibabel as nib
 import logging
+from sklearn.neighbors import KernelDensity
 sys.path.append("/cs/casmip/alina.ryabtsev/Tools")
 from scipy.stats import gaussian_kde
 from tqdm.contrib.logging import logging_redirect_tqdm
@@ -31,8 +30,9 @@ T = TypeVar('T', torch.Tensor, np.ndarray)
 PATCH_SIZE = (128, 128)
 MIN_LESION_AREA = 30
 np.random.seed(42)
-NUM_OF_SAMPLED_PATCHES = 250
-NUM_OF_FP_PATCHES = 75
+NUM_OF_SAMPLED_PATCHES = 450
+NUM_OF_FP_PATCHES = 0
+FP_PATCHES = bool(NUM_OF_FP_PATCHES)
 
 
 def get_FP_patches(pred_filename, seg_filename, roi_filename, patch_size=(128, 128)):
@@ -95,22 +95,55 @@ def get_lesions_areas(support_labels_patches):
     return leasions_areas, lesios_indices
 
 
-def sample_lesions_from_their_distribution(lesions_areas, lesions_indices):
+def sample_lesions_from_gaussian_distribution(lesions_areas, lesions_indices):
+    """
+    This function samples patches from the support set based on the lesions areas.
+    We assume that the lesions areas are normally distributed.
+    :param lesions_areas: a list of the areas of the lesions
+    :param lesions_indices: a list of the indices of the lesions
+    :return: a list of the indices of the patches that were sampled
+    """
     # Assuming your data is stored in a NumPy array called 'data_samples'
     data_samples = np.array(lesions_areas)
     # Create a kernel density estimate (KDE) from the data
     kde = gaussian_kde(data_samples)
+    # Generate points along the x-axis for the PDF plot
+    x_vals = np.linspace(min(data_samples), max(data_samples), 1000)
     # Evaluate the PDF at the specified points
-    indices = np.array([], dtype=int)
-    num_samples = 150
-    while len(indices) < NUM_OF_SAMPLED_PATCHES and num_samples < len(data_samples):
-        drawn_samples = kde.resample(num_samples)
-        drawn_samples = np.squeeze(drawn_samples.reshape(-1, 1))
-        indices_from_samples = np.abs(data_samples[:, None] - drawn_samples).argmin(axis=0)
-        indices_from_samples = np.array(lesions_indices)[np.unique(indices_from_samples).astype(int)]
-        indices = np.concatenate((indices, indices_from_samples))
-        num_samples += 10
-    return indices
+    pdf_values = kde(x_vals)
+    # sample from the estimated density distribution
+    np.random.seed(42)
+    probabilities = pdf_values / np.sum(pdf_values)
+    drawn_indices = np.random.choice(len(x_vals), size=NUM_OF_SAMPLED_PATCHES, replace=False, p=probabilities)
+    return np.array(lesions_indices)[drawn_indices]
+
+
+def sample_lesions_from_exponential_distribution(lesions_areas, lesions_indices):
+    """
+    This function samples patches from the support set based on the lesions areas.
+    We assume that the lesions areas are distributed according to the exponential distribution.
+    :param lesions_areas: a list of the areas of the lesions
+    :param lesions_indices: a list of the indices of the lesions
+    :return: a list of the indices of the patches that were sampled
+    """
+    data_samples = np.array([lesions_areas]).reshape(-1, 1)  # Your data samples
+    # Bandwidth parameter for the kernel density estimate
+    bandwidth = 1
+    # Create a KernelDensity estimator with the custom kernel
+    kde = KernelDensity(kernel='exponential', bandwidth=bandwidth)
+    # Fit the estimator to the data
+    kde.fit(data_samples)
+    # Evaluate the density model at specific points
+    x_vals = np.linspace(min(data_samples), max(data_samples), len(data_samples))
+    log_dens = kde.score_samples(x_vals)
+    pdf_values = np.exp(log_dens)
+    # Normalize densities to form a probability distribution
+    probabilities = pdf_values / np.sum(pdf_values)
+    x_vals = x_vals.reshape(-1, 1)
+    # Draw X samples from the estimated density distribution
+    np.random.seed(42)
+    drawn_indices = np.random.choice(len(x_vals), size=NUM_OF_SAMPLED_PATCHES, replace=False, p=probabilities)
+    return np.array(lesions_indices)[drawn_indices]
 
 
 def get_positive_patches_idx(masks: T) -> np.ndarray:
@@ -213,10 +246,11 @@ def main():
     support_images = torch.cat(support_images, dim=0).to(device)
     support_labels = torch.cat(support_labels, dim=0).to(device)
     support_images_patches, support_labels_patches = get_support_patches(support_images[None], support_labels[None],
-                                                                         patch_size=PATCH_SIZE, FP_patches=True)
+                                                                         patch_size=PATCH_SIZE, FP_patches=FP_PATCHES)
 
     lesions_areas, lesions_indices = get_lesions_areas(support_labels_patches)
-    indices = sample_lesions_from_their_distribution(lesions_areas, lesions_indices)
+    indices = sample_lesions_from_gaussian_distribution(lesions_areas, lesions_indices)
+    # indices = sample_lesions_from_exponential_distribution(lesions_areas, lesions_indices)
 
     d_query = LiverTumorsDataset3D(split="query", support_frac=0.2, label=1, resize_scan=False)
     slice_inferer = SliceInferer(spatial_dim=0, roi_size=(512, 512), sw_batch_size=1, progress=True, device=device)
@@ -241,7 +275,6 @@ def main():
                 logging.info(f"finished postprocessing of prediction {i + 1}: {scan_name}")
                 torch.cuda.empty_cache()
                 pbar.update(1)
-
 
 
 if __name__ == '__main__':
