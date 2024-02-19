@@ -88,10 +88,10 @@ def get_lesions_areas(support_labels_patches):
         mask = seg_patch.cpu().detach().numpy()
         labels = measure.label(mask, background=0)
         for region in measure.regionprops(labels):
-            if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])) and \
-                    region.area > MIN_LESION_AREA:
-                leasions_areas.append(region.area)
-                lesios_indices.append(i)
+            # if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])) and \
+            #         region.area > MIN_LESION_AREA:
+            leasions_areas.append(region.area)
+            lesios_indices.append(i)
     return leasions_areas, lesios_indices
 
 
@@ -158,10 +158,10 @@ def get_positive_patches_idx(masks: T) -> np.ndarray:
         if np.any(labels):
             for region in measure.regionprops(labels):
                 # Check if the bounding box is entirely within the mask boundaries
-                if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])):
-                    # check if region is bigger than some minimal area threshold
-                    if region.area > 30:
-                        positive_masks.append(i)
+                # if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])):
+                # check if region is bigger than some minimal area threshold
+                if region.area > 30:
+                    positive_masks.append(i)
     return np.unique(positive_masks).astype(int)
 
 
