@@ -24,7 +24,6 @@ from sklearn.neighbors import KernelDensity
 sys.path.append("/cs/casmip/alina.ryabtsev/Tools")
 from scipy.stats import gaussian_kde
 from tqdm.contrib.logging import logging_redirect_tqdm
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 T = TypeVar('T', torch.Tensor, np.ndarray)
 PATCH_SIZE = (128, 128)
@@ -34,6 +33,7 @@ NUM_OF_SAMPLED_PATCHES = 450  # maximum number of patches that can be inserted i
 NUM_OF_FP_PATCHES = 0
 FP_PATCHES = bool(NUM_OF_FP_PATCHES)
 SAVE_NAME = "support_analysis"
+LOGGER_NAME = "liver_prediction_support_analysis.log"
 
 
 def get_FP_patches(pred_filename, seg_filename, roi_filename, patch_size=(128, 128)):
@@ -53,7 +53,7 @@ def get_FP_patches(pred_filename, seg_filename, roi_filename, patch_size=(128, 1
     seg = seg.astype(bool)
     FP = np.logical_and(pred, np.logical_not(seg))
     FP = np.logical_and(FP, roi)
-    FP_patches = view_as_windows(FP, (patch_size[0], patch_size[1], 1), step=(64, 64, 1))
+    FP_patches = view_as_windows(FP, (patch_size[0], patch_size[1], 1), step=(patch_size[0] / 2, patch_size[1] / 2, 1))
 
     # take positive patches from FP_patches
     FP_patches = np.concatenate(FP_patches, axis=0)
@@ -231,12 +231,12 @@ def preprocess_prediction(pred: torch.Tensor, seg_name: str, save: bool, save_na
         pred_filename = seg_name.replace("seg", save_name)
         affine_nifti = nib.load(seg_name).affine
         nifti_to_save = nib.Nifti1Image(pred, affine_nifti)
-        # nifti_to_save.header.set_data_dtype(np.unit16)
         nib.save(nifti_to_save, pred_filename)
     return pred
 
+
 def main():
-    logging.basicConfig(filename='liver_prediction_support_20.log', encoding='utf-8', level=logging.DEBUG,
+    logging.basicConfig(filename=LOGGER_NAME, encoding='utf-8', level=logging.DEBUG,
                         format='%(asctime)s %(message)s', datefmt='%d/%m/%Y %I:%M:%S %p')
     logging.info("Started running liver prediction")
     model = universeg(pretrained=True)
@@ -251,7 +251,6 @@ def main():
 
     lesions_areas, lesions_indices = get_lesions_areas(support_labels_patches)
     indices = sample_lesions_from_gaussian_distribution(lesions_areas, lesions_indices)
-    # indices = sample_lesions_from_exponential_distribution(lesions_areas, lesions_indices)
 
     d_query = LiverTumorsDataset3D(split="query", support_frac=0.2, label=1, resize_scan=False)
     slice_inferer = SliceInferer(spatial_dim=0, roi_size=(512, 512), sw_batch_size=1, progress=True, device=device)
