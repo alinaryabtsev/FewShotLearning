@@ -8,4 +8,5 @@ datasets/
 */*pycache*
 */*.pyc
 debug_patches/
+test_universeg/__pycache__
 
