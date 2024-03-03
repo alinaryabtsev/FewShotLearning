@@ -28,11 +28,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 T = TypeVar('T', torch.Tensor, np.ndarray)
 PATCH_SIZE = (128, 128)
-MIN_LESION_AREA = 30
+MIN_LESION_AREA = 30  # usually 30
 np.random.seed(42)
-NUM_OF_SAMPLED_PATCHES = 450
+NUM_OF_SAMPLED_PATCHES = 450  # maximum number of patches that can be inserted into the GPU 4090 memory
 NUM_OF_FP_PATCHES = 0
 FP_PATCHES = bool(NUM_OF_FP_PATCHES)
+SAVE_NAME = "support_analysis"
 
 
 def get_FP_patches(pred_filename, seg_filename, roi_filename, patch_size=(128, 128)):
@@ -88,10 +89,10 @@ def get_lesions_areas(support_labels_patches):
         mask = seg_patch.cpu().detach().numpy()
         labels = measure.label(mask, background=0)
         for region in measure.regionprops(labels):
-            # if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])) and \
-            #         region.area > MIN_LESION_AREA:
-            leasions_areas.append(region.area)
-            lesios_indices.append(i)
+            if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])) and \
+                    region.area > MIN_LESION_AREA:
+                leasions_areas.append(region.area)
+                lesios_indices.append(i)
     return leasions_areas, lesios_indices
 
 
@@ -158,10 +159,10 @@ def get_positive_patches_idx(masks: T) -> np.ndarray:
         if np.any(labels):
             for region in measure.regionprops(labels):
                 # Check if the bounding box is entirely within the mask boundaries
-                # if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])):
-                # check if region is bigger than some minimal area threshold
-                if region.area > 30:
-                    positive_masks.append(i)
+                if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])):
+                    # check if region is bigger than some minimal area threshold
+                    if region.area > MIN_LESION_AREA:
+                        positive_masks.append(i)
     return np.unique(positive_masks).astype(int)
 
 
@@ -271,7 +272,7 @@ def main():
                 hard_pred = res["Prediction"]
                 assert not torch.any(torch.isnan(hard_pred)), f"Prediction contains NaNs: {scan_name}"
                 logging.info(f"finished inference of scan {i + 1}: {scan_name}")
-                preprocess_prediction(hard_pred, seg_name, True, save_name=f"support_analysis_with_FP", resize_scan=False)
+                preprocess_prediction(hard_pred, seg_name, True, save_name=SAVE_NAME, resize_scan=False)
                 logging.info(f"finished postprocessing of prediction {i + 1}: {scan_name}")
                 torch.cuda.empty_cache()
                 pbar.update(1)
