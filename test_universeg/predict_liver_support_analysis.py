@@ -1,4 +1,5 @@
 import os
+from sklearn.cluster import KMeans
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 import torch
 from torch import nn
@@ -29,11 +30,13 @@ T = TypeVar('T', torch.Tensor, np.ndarray)
 PATCH_SIZE = (128, 128)
 MIN_LESION_AREA = 30  # usually 30
 np.random.seed(42)
-NUM_OF_SAMPLED_PATCHES = 450  # maximum number of patches that can be inserted into the GPU 4090 memory
+SUPPORT_FRAC = 0.1
+K_SHOTS = 10
+NUM_OF_SAMPLED_PATCHES = 450  # maximum number of support patches that can be inserted into the GPU 4090 memory
 NUM_OF_FP_PATCHES = 0
 FP_PATCHES = bool(NUM_OF_FP_PATCHES)
-SAVE_NAME = "support_analysis"
-LOGGER_NAME = "liver_prediction_support_analysis.log"
+SAVE_NAME = "support_analysis_10"
+LOGGER_NAME = "liver_prediction_support_analysis_10.log"
 
 
 def get_FP_patches(pred_filename, seg_filename, roi_filename, patch_size=(128, 128)):
@@ -89,10 +92,9 @@ def get_lesions_areas(support_labels_patches):
         mask = seg_patch.cpu().detach().numpy()
         labels = measure.label(mask, background=0)
         for region in measure.regionprops(labels):
-            if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])) and \
-                    region.area > MIN_LESION_AREA:
-                leasions_areas.append(region.area)
-                lesios_indices.append(i)
+            # if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])) and \
+            if region.area > MIN_LESION_AREA:
+                leasions_areas.append(i)
     return leasions_areas, lesios_indices
 
 
@@ -157,12 +159,7 @@ def get_positive_patches_idx(masks: T) -> np.ndarray:
         labels = measure.label(mask, background=0)
         # Loop through each labeled region
         if np.any(labels):
-            for region in measure.regionprops(labels):
-                # Check if the bounding box is entirely within the mask boundaries
-                if all(0 < point < PATCH_SIZE[0] for point in (region.bbox[1:3] + region.bbox[4:])):
-                    # check if region is bigger than some minimal area threshold
-                    if region.area > MIN_LESION_AREA:
-                        positive_masks.append(i)
+            positive_masks.extend(i for region in measure.regionprops(labels) if region.area > MIN_LESION_AREA)
     return np.unique(positive_masks).astype(int)
 
 
@@ -182,6 +179,26 @@ def get_support_patches(support_images: torch.Tensor, support_labels: torch.Tens
         images_patches = torch.cat((images_patches, support_FP_images[:NUM_OF_FP_PATCHES]))
         labels_patches = torch.cat((labels_patches, support_FP_labels[:NUM_OF_FP_PATCHES]))
     return images_patches, labels_patches
+
+
+def get_support_patches_by_clustering(support_patches_images: torch.Tensor, support_patches_labels: torch.Tensor,
+                                      num_clusters: int, support_size: int = 450) -> tuple[torch.Tensor, torch.Tensor]:
+    kmeans_clusters = KMeans(n_clusters=num_clusters, random_state=42)
+    support_labels_patches_reshaped = E.rearrange(support_patches_labels, "N 1 W H -> N (H W)")
+    cluster_labels = kmeans_clusters.fit_predict(support_labels_patches_reshaped)
+    unique, counts = np.unique(cluster_labels, return_counts=True)
+    # remove the most frequent cluster from cluster labels
+    unique = np.delete(unique, np.argmax(counts))
+    counts = np.delete(counts, np.argmax(counts)).astype('float64')
+    probabilities = dict(zip(unique, np.true_divide(counts, np.sum(counts))))
+
+    indices = np.where(np.isin(cluster_labels, unique))[0]
+    clusters_labels_filtered = cluster_labels[indices]
+    indices_probabilities = np.array([probabilities[c] for c in clusters_labels_filtered])
+    indices_probabilities = indices_probabilities / np.sum(indices_probabilities)
+    randomized_patches_indices = np.random.choice(indices, size=support_size, replace=False, p=indices_probabilities)
+    return torch.index_select(support_patches_images, 0, torch.tensor(randomized_patches_indices)), \
+           torch.index_select(support_patches_labels, 0, torch.tensor(randomized_patches_indices))
 
 
 @torch.no_grad()
@@ -242,21 +259,22 @@ def main():
     model = universeg(pretrained=True)
     _ = model.to(device)
 
-    d_support = LiverTumorsDataset3D(split="support", support_frac=0.2, label=1, resize_scan=False)
-    support_images, support_labels, support_filenames = zip(*itertools.islice(d_support, 20))
+    d_support = LiverTumorsDataset3D(split="support", support_frac=SUPPORT_FRAC, label=1, resize_scan=False)
+    support_images, support_labels, support_filenames = zip(*itertools.islice(d_support, K_SHOTS))
     support_images = torch.cat(support_images, dim=0).to(device)
     support_labels = torch.cat(support_labels, dim=0).to(device)
     support_images_patches, support_labels_patches = get_support_patches(support_images[None], support_labels[None],
                                                                          patch_size=PATCH_SIZE, FP_patches=FP_PATCHES)
 
-    lesions_areas, lesions_indices = get_lesions_areas(support_labels_patches)
-    indices = sample_lesions_from_gaussian_distribution(lesions_areas, lesions_indices)
+    # lesions_areas, lesions_indices = get_lesions_areas(support_labels_patches)
+    # indices = sample_lesions_from_gaussian_distribution(lesions_areas, lesions_indices)
+    # selected_support_images_patches = torch.index_select(support_images_patches, 0, torch.tensor(indices).to(device))
+    # selected_support_labels_patches = torch.index_select(support_labels_patches, 0, torch.tensor(indices).to(device))
+    selected_support_images_patches, selected_support_labels_patches = get_support_patches_by_clustering(support_images_patches.to("cpu"), support_labels_patches.to("cpu"), 20, NUM_OF_SAMPLED_PATCHES)
 
-    d_query = LiverTumorsDataset3D(split="query", support_frac=0.2, label=1, resize_scan=False)
     slice_inferer = SliceInferer(spatial_dim=0, roi_size=(512, 512), sw_batch_size=1, progress=True, device=device)
+    d_query = LiverTumorsDataset3D(split="query", support_frac=0.2, label=1, resize_scan=False)
     total = len(d_query)
-    selected_support_images_patches = torch.index_select(support_images_patches, 0, torch.tensor(indices).to(device))
-    selected_support_labels_patches = torch.index_select(support_labels_patches, 0, torch.tensor(indices).to(device))
     with tqdm(total=total) as pbar:
         with logging_redirect_tqdm():
             for i, pack in enumerate(d_query):
@@ -266,7 +284,7 @@ def main():
                 # inference with Monai's slice inference
                 image = torch.unsqueeze(image, dim=1).to(device)
                 res = inference_with_slice_inferer(slice_inferer, model_patches_inferer, model, image, label,
-                                                   selected_support_images_patches, selected_support_labels_patches)
+                                                   selected_support_images_patches.to(device), selected_support_labels_patches.to(device))
                 scan_name, seg_name = filename
                 hard_pred = res["Prediction"]
                 assert not torch.any(torch.isnan(hard_pred)), f"Prediction contains NaNs: {scan_name}"
