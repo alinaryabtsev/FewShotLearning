@@ -7,4 +7,24 @@ PATCH_SIZE = (128, 128)
 np.random.seed(42)
 NUM_OF_SAMPLED_PATCHES = 450  # maximum number of support patches that can be inserted into the GPU 4090 memory
 NUM_OF_FP_PATCHES = 0
-FP_PATCHES = bool(NUM_OF_FP_PATCHES)
+HAS_FP_PATCHES = bool(NUM_OF_FP_PATCHES)
+
+# support patches prepeocessing and selection methods:
+CLUSTERING = "clustering"
+GAUSSIAN_KERNEL = "gaussian kernel"
+NO_FILTER = "no filter"
+
+
+import torch
+import numpy as np
+from typing import TypeVar
+T = TypeVar('T', torch.Tensor, np.ndarray)
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+SOFT_PREDICTION = "Soft Prediction"
+HARD_PREDICTION = "Prediction"
+
+VARIABILITY_THRESHOLD = 3
+
+RANDOM_SEED = 42
+RICHARDS_ADVICE = "Richard says: 'Radiologists are the best. And I am the best radiologist'"

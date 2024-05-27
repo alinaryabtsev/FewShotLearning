@@ -1,44 +1,56 @@
 from VirtualRichard import VirtualRichard
+from SupportPreprocessor import SupportPreprocessor
+from UniverSegPedictor import UniverSegPredictor
 from datasets_loaders.liver_metastasis_dataset_3D import LiverTumorsDataset3D
 from datasets_loaders.dataset_utils import LIVER_LESIONS_DATASET, LUNG_LESIONS_DATASET
+import constants
+
+import os
+from monai.inferers import SliceInferer, PatchInferer, SlidingWindowSplitter, Inferer
 import torch
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 import sys
-import glob
+
 sys.path.append("/cs/casmip/alina.ryabtsev/FewShotLearning/")
 from torch import nn
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-from typing import String
 from Exceptions import LemonadeExceptions
+from typing import tuple
 sys.path.append('UniverSeg')
 from UniverSeg.universeg import universeg
-import constants
-import itertools
 
 
-def obtain_dataset_for_few_shot_learning(dataset_path: String) -> torch.Tensor:
+def obtain_dataset_for_few_shot_learning(dataset_path: String) -> List[torch.Tensor]:
     if dataset_path == LIVER_LESIONS_DATASET:
-        d_support = LiverTumorsDataset3D(split="support", support_frac=constants.SUPPORT_FRAC, label=1, resize_scan=False)
+        d_support = LiverTumorsDataset3D(split="support", support_frac=constants.SUPPORT_FRAC, label=1,
+                                         resize_scan=False)
         d_query = LiverTumorsDataset3D(split="query", support_frac=0.2, label=1, resize_scan=False)
-        support_images, support_labels, support_filenames = zip(*itertools.islice(d_support, constants.K_SHOTS))
-        support_images = torch.cat(support_images, dim=0).to(device)
-        support_labels = torch.cat(support_labels, dim=0).to(device)
-    elif dataset_path == LIVER_LESIONS_DATASET:
-        pass
+        # extract to function from SupportPreprocessor
+        support_preprocessor = SupportPreprocessor(d_support, constants.K_SHOTS, constants.DEVICE,
+                                                   constants.NUM_OF_SAMPLED_PATCHES)
+        support_images_patches, support_labels_patches = support_preprocessor.preprocess_to_patches(
+            constants.CLUSTERING)
+        return support_images_patches, support_labels_patches, d_query
+    elif dataset_path == LUNG_LESIONS_DATASET:
+        raise NotImplementedError("lung lesions dataset is not impelemented yet")
     else:
         raise LemonadeExceptions.DatasetException
-    return
+
 
 def get_universeg_model() -> nn.Module:
-    model = universeg(pretrained=True)
-    return model
+    return universeg(pretrained=True)
 
 
-def run_few_shot_learning_model(model: nn.Module, support_dataset: torch.Tensor, query_dataset: torch.Tensor) -> torch.Tensor:
+def run_few_shot_learning_model(model: nn.Module, support_dataset: Tuple[torch.Tensor, torch.Tensor],
+                                query_dataset: torch.Dataset) -> torch.Tensor:
+    UniverSegPredictor(model, constants.DEVICE, support_dataset[0], support_dataset[1]).predict(query_dataset)
+
+
+def post_process_predictions(predictions: torch.Tensor) -> torch.Tensor:
     pass
 
 
 def evaluate_predictions(predictions: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    pass
+    evaluator = VirtualRichard()
 
 
 def train_nnUNet(train_set: torch.Tensor, test_set: torch.Tensor) -> nn.Module:
@@ -62,7 +74,9 @@ def main():
     # 6. Perform the last two steps until fully supervised.
     # Note: Virtual Richard should comapare "times" at each execution, between annotaing from scratch and fixing
     # predicted annotations.
-    model = get_universeg_model().to(device)
+    model = get_universeg_model().to(constants.DEVICE)
+    support_images_patches, support_labels_patches, d_query = obtain_dataset_for_few_shot_learning(LIVER_LESIONS_DATASET)
+    query_pred = run_few_shot_learning_model(model, (support_images_patches, support_labels_patches), d_query)
 
 
 if __name__ == '__main__':
