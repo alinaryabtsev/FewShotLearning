@@ -6,7 +6,6 @@ from datasets_loaders.dataset_utils import LIVER_LESIONS_DATASET, LUNG_LESIONS_D
 import constants
 
 import os
-from monai.inferers import SliceInferer, PatchInferer, SlidingWindowSplitter, Inferer
 import torch
 os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
 import sys
@@ -14,7 +13,6 @@ import sys
 sys.path.append("/cs/casmip/alina.ryabtsev/FewShotLearning/")
 from torch import nn
 from Exceptions import LemonadeExceptions
-from typing import tuple
 sys.path.append('UniverSeg')
 from UniverSeg.universeg import universeg
 
@@ -31,7 +29,7 @@ def obtain_dataset_for_few_shot_learning(dataset_path: String) -> List[torch.Ten
             constants.CLUSTERING)
         return support_images_patches, support_labels_patches, d_query
     elif dataset_path == LUNG_LESIONS_DATASET:
-        raise NotImplementedError("lung lesions dataset is not impelemented yet")
+        raise NotImplementedError("lung lesions dataset is not implemented yet")
     else:
         raise LemonadeExceptions.DatasetException
 
@@ -76,7 +74,7 @@ def main():
     # predicted annotations.
     model = get_universeg_model().to(constants.DEVICE)
     support_images_patches, support_labels_patches, d_query = obtain_dataset_for_few_shot_learning(LIVER_LESIONS_DATASET)
-    query_pred = run_few_shot_learning_model(model, (support_images_patches, support_labels_patches), d_query)
+    run_few_shot_learning_model(model, (support_images_patches, support_labels_patches), d_query)
 
 
 if __name__ == '__main__':
