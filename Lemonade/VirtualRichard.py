@@ -1,4 +1,4 @@
-from Typing import Callable
+from typing import Callable
 import numpy as np
 from utils import DetectionMetrics, SegmentationMetrics
 import constants

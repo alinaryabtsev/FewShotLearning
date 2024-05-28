@@ -1,3 +1,4 @@
+from torch import Tensor
 from torch.utils.data import Dataset
 import torch
 import constants
@@ -21,6 +22,7 @@ class SupportPreprocessor:
     This class implements a preprocessor for drawing patches from the support set scans for using them as the actual
     support set for the UniverSeg model
     """
+
     def __init__(self, d_support: Dataset, k_shots: int = constants.K_SHOTS, device: torch.device = constants.DEVICE,
                  support_size: int = constants.NUM_OF_SAMPLED_PATCHES):
         """
@@ -33,20 +35,20 @@ class SupportPreprocessor:
         self.d_support = d_support
         self.k_shots = k_shots
         self.support_images, self.support_labels, self.filenames = zip(*itertools.islice(self.d_support, self.k_shots))
-        self.support_images = torch.cat(self.support_images, dim=0)
-        self.support_labels = torch.cat(self.support_labels, dim=0)
+        self.support_images = torch.cat(self.support_images, dim=0).unsqueeze(0)
+        self.support_labels = torch.cat(self.support_labels, dim=0).unsqueeze(0)
         self.device = device
         self.desired_support_size = support_size
 
     def _get_support_patches(self, patch_size: tuple[int, int] = constants.PATCH_SIZE,
-                             has_FP_patches: bool = constants.HAS_FP_PATCHES) -> tuple[torch.Tensor, torch.Tensor]:
+                             has_FP_patches: bool = constants.HAS_FP_PATCHES) -> tuple[Tensor, Tensor]:
         """
         This function takes the slices of the support scans and extracts positive patches from them
         :param patch_size: the shape of the extracted patch
         :param has_FP_patches: a boolean that conducts wether there are FP patches to extract
-        :return:
+        :return: the support images patches and their labels as patches
         """
-        splitter = SlidingWindowSplitter(patch_size=patch_size, overlap=0.5, device=self.device)
+        splitter = SlidingWindowSplitter(patch_size=patch_size, overlap=0.5)
         # eliminate all negative patches and concatinte the patches
         images_patches = torch.concat([t[0] for t in splitter(self.support_images[0])])
         labels_patches = torch.concat([t[0] for t in splitter(self.support_labels[0])])
@@ -77,7 +79,8 @@ class SupportPreprocessor:
             labels = measure.label(mask, background=0)
             # Loop through each labeled region, if it consits some region with a big enough area - add its index
             if np.any(labels):
-                positive_masks.extend(i for region in measure.regionprops(labels) if region.area > constants.MIN_LESION_AREA)
+                positive_masks.extend(
+                    i for region in measure.regionprops(labels) if region.area > constants.MIN_LESION_AREA)
         return np.unique(positive_masks).astype(int)
 
     def _get_support_set_FP_patches(self):
@@ -114,7 +117,8 @@ class SupportPreprocessor:
         seg = seg.astype(bool)
         FP = np.logical_and(pred, np.logical_not(seg))
         FP = np.logical_and(FP, roi)
-        FP_patches = view_as_windows(FP, (patch_size[0], patch_size[1], 1), step=(patch_size[0]/2, patch_size[1]/2, 1))
+        FP_patches = view_as_windows(FP, (patch_size[0], patch_size[1], 1),
+                                     step=(patch_size[0] / 2, patch_size[1] / 2, 1))
         # take positive patches from FP_patches
         FP_patches = np.concatenate(FP_patches, axis=0)
         FP_patches = np.concatenate(FP_patches, axis=0)
@@ -122,8 +126,8 @@ class SupportPreprocessor:
         patches = E.rearrange(patches, "N H W 1 -> N 1 H W")
         return patches
 
-    def _filter_support_patches_by_clustering(self, patches: torch.Tensor, labels: torch.Tensor,
-                                              num_clusters: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def _filter_support_patches_by_clustering(self, patches: Tensor, labels: Tensor, num_clusters: int) -> tuple[
+        Tensor, Tensor]:
         """
         Filters the support patches by clustering them and getting patches from meaningful clusters
         :param patches: the patches to sample from
@@ -150,7 +154,7 @@ class SupportPreprocessor:
             torch.index_select(labels, 0, torch.tensor(sampled_patches_indices)).to(self.device)
 
     @staticmethod
-    def _get_lesions_areas(support_labels_patches: torch.Tensor) -> List[List]:
+    def _get_lesions_areas(support_labels_patches: Tensor) -> List[List]:
         """
         This function gets the areas of the lesions from the support labels patches
         :param support_labels_patches: the labels of the support patches
@@ -161,7 +165,8 @@ class SupportPreprocessor:
         for i, seg_patch in enumerate(support_labels_patches):
             mask = seg_patch.cpu().detach().numpy()
             labels = measure.label(mask, background=0)
-            leasions_areas.extend(i for region in measure.regionprops(labels) if region.area > constants.MIN_LESION_AREA)
+            leasions_areas.extend(
+                i for region in measure.regionprops(labels) if region.area > constants.MIN_LESION_AREA)
         return leasions_areas, lesios_indices
 
     def _sample_lesions_from_gaussian_distribution(self, lesions_areas: List, lesions_indices: List) -> np.ndarray:
@@ -184,7 +189,7 @@ class SupportPreprocessor:
         drawn_indices = np.random.choice(len(x_vals), size=self.desired_support_size, replace=False, p=probabilities)
         return np.array(lesions_indices)[drawn_indices]
 
-    def _filter_support_patches_by_gaussian_kernel(self, patches: torch.Tensor, labels: torch.Tensor) -> List[torch.Tensor]:
+    def _filter_support_patches_by_gaussian_kernel(self, patches: Tensor, labels: Tensor) -> tuple[Tensor, Tensor]:
         """
         This function filters the support patches by sampling them according the gaussian kernel density estimation
         :param patches: the patches to sample from
@@ -196,7 +201,7 @@ class SupportPreprocessor:
         return torch.index_select(patches, 0, torch.tensor(indices).to(self.device)), \
             torch.index_select(labels, 0, torch.tensor(indices).to(self.device))
 
-    def preprocess_to_patches(self, method: String) -> tuple[torch.Tensor, torch.Tensor]:
+    def preprocess_to_patches(self, method: str) -> tuple[Tensor, Tensor]:
         """
         This function preprocesses the support set to patches according to the provided method
         :param method: a method to filter the support set's patches (clustering, gaussian kernel, no filter)
@@ -213,10 +218,9 @@ class SupportPreprocessor:
             self._filter_support_patches_by_gaussian_kernel(support_images_patches, support_labels_patches)
         elif method == constants.CLUSTERING:
             return self._filter_support_patches_by_clustering(support_images_patches, support_labels_patches,
-                                                              num_clusters=20, support_size=self.desired_support_size)
+                                                              num_clusters=20)
         elif method == constants.NO_FILTER:
-            return support_images_patches[:self.desired_support_size], \
-                support_labels_patches[:self.desired_support_size]
+            return support_images_patches[:self.desired_support_size].to(self.device), \
+                support_labels_patches[:self.desired_support_size].to(self.device)
         else:
             raise ValueError(f"Provided method: {method} does not exist")
-

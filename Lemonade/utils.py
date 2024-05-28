@@ -11,6 +11,7 @@ from scipy.ndimage import (
 )
 import constants
 
+
 class DetectionMetrics:
     @staticmethod
     def calculate_TP_score(prediction: np.array, GT_label: np.array):
