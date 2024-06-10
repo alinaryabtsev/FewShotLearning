@@ -1,8 +1,8 @@
+from Lemonade.datasets_loaders.liver_metastasis_dataset_3D import LiverTumorsDataset3D
 from VirtualRichard import VirtualRichard
 from SupportPreprocessor import SupportPreprocessor
 from UniverSegPedictor import UniverSegPredictor
 from datasets_loaders.liver_metastasis_dataset_3D import LiverTumorsDataset3D
-from datasets_loaders.dataset_utils import LIVER_LESIONS_DATASET, LUNG_LESIONS_DATASET
 import constants
 from torch.utils.data import Dataset
 
@@ -22,8 +22,8 @@ sys.path.append('UniverSeg')
 from UniverSeg.universeg import universeg
 
 
-def obtain_dataset_for_few_shot_learning(dataset_path: str) -> Union[Tensor, Tensor, Dataset]:
-    if dataset_path == LIVER_LESIONS_DATASET:
+def obtain_dataset_for_few_shot_learning(dataset_path: str) -> tuple[Tensor, Tensor, LiverTumorsDataset3D]:
+    if dataset_path == constants.LIVER_LESIONS_DATASET:
         d_support = LiverTumorsDataset3D(split="support", support_frac=constants.SUPPORT_FRAC, label=1,
                                          resize_scan=False)
         d_query = LiverTumorsDataset3D(split="query", support_frac=constants.SUPPORT_FRAC, label=1, resize_scan=False)
@@ -33,8 +33,8 @@ def obtain_dataset_for_few_shot_learning(dataset_path: str) -> Union[Tensor, Ten
         support_images_patches, support_labels_patches = support_preprocessor.preprocess_to_patches(
             constants.CLUSTERING)
         return support_images_patches, support_labels_patches, d_query
-    elif dataset_path == LUNG_LESIONS_DATASET:
-        raise NotImplementedError("lung lesions dataset is not impelemented yet")
+    elif dataset_path == constants.LUNG_LESIONS_DATASET:
+        raise NotImplementedError("lung lesions dataset is not implemented yet")
     else:
         raise LemonadeExceptions.DatasetException
 

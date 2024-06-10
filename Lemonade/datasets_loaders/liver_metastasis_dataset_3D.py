@@ -5,7 +5,8 @@ import os
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from .dataset_utils import load_scans, SCANS_FORMAT, LIVER_LESIONS_DATASET
+from .dataset_utils import load_scans
+from ..constants import LIVER_LESIONS_DATASET, SCANS_FORMAT
 
 
 @dataclass

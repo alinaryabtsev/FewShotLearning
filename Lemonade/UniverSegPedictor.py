@@ -52,6 +52,10 @@ class UniverSegPredictor:
                 assert not torch.any(torch.isnan(hard_pred)), f"Prediction contains NaNs: {scan_name}"
                 self._postprocess_prediction(hard_pred, label_name, True, save_name=constants.SAVE_NAME,
                                              resize_scan=False)
+                if constants.SAVE_SOFT_PREDICTION:
+                    soft_pred = res[constants.SOFT_PREDICTION]
+                    self._postprocess_prediction(soft_pred, label_name, True,
+                                                 save_name=constants.SAVE_SOFT_PREDICTION_NAME, resize_scan=False)
                 torch.cuda.empty_cache()
                 pbar.update(1)
 

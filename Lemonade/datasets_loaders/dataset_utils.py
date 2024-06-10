@@ -5,16 +5,8 @@ import nibabel as nib
 from skimage.transform import resize
 from tqdm import tqdm
 import einops as E
-
-
-SCANS_FORMAT = "_scan.nii.gz"
-SEGMENTATIONS_FORMAT = "_seg.nii.gz"
-RESIZE_RESOLUTION = (128, 128)
-
-LUNG_LESIONS_DATASET = "/cs/casmip/alina.ryabtsev/FewShotLearning/datasets/lungs_lesions"
-CLIP_VALUES_LUNGS = (-1000, 150)
-LIVER_LESIONS_DATASET = "/cs/casmip/alina.ryabtsev/FewShotLearning/datasets/liver_lesions"
-CLIP_VALUES_LIVER = (-150, 150)
+# import the constants from the constants.py file
+from .. import constants
 
 
 def preprocess_scan_and_segmentation(scan, segmentation, split, scan_resize, clip_values, half_precision=False):
@@ -29,8 +21,8 @@ def preprocess_scan_and_segmentation(scan, segmentation, split, scan_resize, cli
     scan_data = np.clip(scan_data, *clip_values)
     scan_data = (scan_data - scan_data.min()) / (scan_data.max() - scan_data.min())
     if scan_resize:
-        scan_data = resize(scan_data, (*RESIZE_RESOLUTION, scan_data.shape[2]))
-        seg_data = resize(seg_data, (*RESIZE_RESOLUTION, seg_data.shape[2]), order=0, preserve_range=True, anti_aliasing=False)
+        scan_data = resize(scan_data, (*constants.RESIZE_RESOLUTION, scan_data.shape[2]))
+        seg_data = resize(seg_data, (*constants.RESIZE_RESOLUTION, seg_data.shape[2]), order=0, preserve_range=True, anti_aliasing=False)
     seg_data = (seg_data >= 1).astype(seg_data.dtype)
     scan_data = E.rearrange(scan_data, "H W D ->  D 1 H W")
     seg_data = E.rearrange(seg_data, "H W D ->  D 1 H W")
@@ -56,9 +48,9 @@ def load_scans(split, split_i, N, path, resize_scan=True, half_precision=False):
     rng = np.random.default_rng(42)
     p = rng.permutation(N)
     data = []
-    scans = sorted(glob(os.path.join(path, f"*{SCANS_FORMAT}")))
+    scans = sorted(glob(os.path.join(path, f"*{constants.SCANS_FORMAT}")))
     scans = [scans[i] for i in p]
-    segmentations = sorted(glob(os.path.join(path, f"*{SEGMENTATIONS_FORMAT}")))
+    segmentations = sorted(glob(os.path.join(path, f"*{constants.SEGMENTATIONS_FORMAT}")))
     segmentations = [segmentations[i] for i in p]
 
     if split == "support":
@@ -71,10 +63,10 @@ def load_scans(split, split_i, N, path, resize_scan=True, half_precision=False):
         iter_data = lambda: zip(scans[split_i:], segmentations[split_i:])
         total = len(scans) - split_i
 
-    if path == LIVER_LESIONS_DATASET:
-        clip_values = CLIP_VALUES_LIVER
-    elif path == LUNG_LESIONS_DATASET:
-        clip_values = CLIP_VALUES_LUNGS
+    if path == constants.LIVER_LESIONS_DATASET:
+        clip_values = constants.CLIP_VALUES_LIVER
+    elif path == constants.LUNG_LESIONS_DATASET:
+        clip_values = constants.CLIP_VALUES_LUNGS
     else:
         raise ValueError("dataset path not specified")
 
