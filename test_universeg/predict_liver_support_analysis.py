@@ -21,10 +21,10 @@ from skimage.util import view_as_windows
 from glob import glob
 import nibabel as nib
 import logging
-from sklearn.neighbors import KernelDensity
-sys.path.append("/cs/casmip/alina.ryabtsev/Tools")
 from scipy.stats import gaussian_kde
 from tqdm.contrib.logging import logging_redirect_tqdm
+from sklearn.neighbors import KernelDensity
+sys.path.append("/cs/casmip/alina.ryabtsev/Tools")
 
 T = TypeVar('T', torch.Tensor, np.ndarray)
 PATCH_SIZE = (128, 128)
@@ -273,7 +273,7 @@ def main():
     selected_support_images_patches, selected_support_labels_patches = get_support_patches_by_clustering(support_images_patches.to("cpu"), support_labels_patches.to("cpu"), 20, NUM_OF_SAMPLED_PATCHES)
 
     slice_inferer = SliceInferer(spatial_dim=0, roi_size=(512, 512), sw_batch_size=1, progress=True, device=device)
-    d_query = LiverTumorsDataset3D(split="query", support_frac=0.2, label=1, resize_scan=False)
+    d_query = LiverTumorsDataset3D(split="query", support_frac=SUPPORT_FRAC, label=1, resize_scan=False)
     total = len(d_query)
     with tqdm(total=total) as pbar:
         with logging_redirect_tqdm():
