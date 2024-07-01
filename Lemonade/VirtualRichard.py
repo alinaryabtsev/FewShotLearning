@@ -43,8 +43,7 @@ class VirtualRichard:
         :param GT_labels: The tensor that contains the ground truth labels
         :return: A tuple of scores: [countour score, relative volume difference score
         """
-        return [SegmentationMetrics.calculate_contour_score(p, g) for p, g in zip(predictions, GT_labels)], \
-            [SegmentationMetrics.calculate_relative_volume_difference_score(p, g) for p, g in zip(predictions, GT_labels)]
+        return [SegmentationMetrics.calculate_contour_score(p, g) for p, g in zip(predictions, GT_labels)]
 
     @staticmethod
     def resegment(predictions: np.array, GT_labels: np.array):
