@@ -1,6 +1,7 @@
 import medpy.metric.binary as medpy_metrics
 from scipy.ndimage import binary_fill_holes
 from skimage.morphology import remove_small_objects
+from skimage import measure
 import numpy as np
 from scipy.ndimage import (
     _ni_support,
@@ -10,6 +11,7 @@ from scipy.ndimage import (
     generate_binary_structure,
     label,
 )
+from scipy import ndimage
 import constants
 from typing import List, Union
 import nibabel as nib
@@ -27,7 +29,10 @@ class DetectionMetrics:
         :param GT_label: The tensor that contains the ground truth label
         :return: The TP score
         """
-        return medpy_metrics.obj_tpr(GT_label, prediction)
+        try:
+            return medpy_metrics.obj_tpr(GT_label, prediction)
+        except ZeroDivisionError as ex:
+            return 1
 
     @staticmethod
     def calculate_FN_score(prediction: np.array, GT_label: np.array):
@@ -52,7 +57,10 @@ class DetectionMetrics:
         :return: The FP score
         """
         # return medpy_metrics.obj_fpr(prediction, GT_label)
-        return medpy_metrics.obj_fpr(GT_label, prediction)
+        try:
+            return medpy_metrics.obj_fpr(GT_label, prediction)
+        except ZeroDivisionError as ex:
+            return 0
 
 
 class SegmentationMetrics:
@@ -208,7 +216,7 @@ class SegmentationMetrics:
         if np.count_nonzero(reference) == 0:
             raise RuntimeError("The second supplied array does not contain any binary object.")
 
-        # extract only 1-pixel border line of objects
+        # extract only 1-pixel borderline of objects
         result_border = result ^ binary_erosion(result, structure=footprint, iterations=1)
         reference_border = reference ^ binary_erosion(reference, structure=footprint, iterations=1)
 
@@ -216,6 +224,55 @@ class SegmentationMetrics:
         #       foreground objects, therefore the input has to be reversed
         dt = distance_transform_edt(~reference_border, sampling=voxelspacing)
         return dt[result_border], result_border, reference_border
+
+
+def approximate_diameter(tumor_volume):
+    """
+    approximate the diameter of a tumor from its volume
+    :param tumor_volume: the volume of the tumor
+    """
+    r = ((3 * tumor_volume) / (4 * np.pi)) ** (1 / 3)
+    diameter = 2 * r
+    return diameter
+
+
+def get_connected_components(map):
+    """
+    Remove Small connected components from a binary mask
+    :param map: the binary mask
+    :return: the binary mask with small connected components removed and the number of connected components
+    """
+    label_img = measure.label(map)
+    cc_num = label_img.max()
+    cc_areas = ndimage.sum(map, label_img, range(cc_num + 1))
+    area_mask = (cc_areas <= 10)
+    label_img[area_mask[label_img]] = 0
+    return_value = measure.label(label_img)
+    return return_value, return_value.max()
+
+
+def mask_by_diameter(mask, voxel_volume, diameter):
+    """
+    classifies predicted shapes into diameters
+    :param mask: the binary mask that represents some segmentation
+    :param voxel_volume: voxel volume from nifti's header
+    :param diameter: diameter to classify (in mm)
+    :return: a list of labels, list of masks and their indices according to diameter
+    """
+    labels, max_label = get_connected_components(mask)
+    tumors_indices = []
+    tumors_with_diameter_masked = np.zeros(mask.shape)
+    for i in range(1, max_label + 1):
+        current_tumor = (labels == i)
+        num_of_voxels = current_tumor.sum()
+        tumor_volume = num_of_voxels * voxel_volume
+        approx_diameter = approximate_diameter(tumor_volume)
+        if approx_diameter >= diameter:
+            tumors_indices.append(i)
+            tumors_with_diameter_masked[current_tumor] = 1
+    tumors_with_diameter_labeled = measure.label(tumors_with_diameter_masked)
+    tumors_with_diameter_labeled = tuple((tumors_with_diameter_labeled, tumors_with_diameter_labeled.max()))
+    return tumors_with_diameter_labeled, tumors_with_diameter_masked, tumors_indices
 
 
 def postprocess_predictions(predictions: List[np.array], save_postprocessed: bool = False,
