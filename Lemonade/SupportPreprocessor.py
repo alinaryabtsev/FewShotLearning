@@ -13,8 +13,7 @@ from skimage.util import view_as_windows
 from glob import glob
 import os
 import nibabel as nib
-from datasets_loaders.dataset_utils import LIVER_LESIONS_DATASET
-from typing import List, Tuple
+from typing import List, Tuplesupport_analysis_100_clusters_k10
 
 
 class SupportPreprocessor:
@@ -88,7 +87,7 @@ class SupportPreprocessor:
         This function gets the support set and returns the FP patches from the support set
         :return: support images and labels as patches
         """
-        support_predictions = glob(os.path.join(LIVER_LESIONS_DATASET, "*support_FP_analysis.nii.gz"))
+        support_predictions = glob(os.path.join(constants.LIVER_LESIONS_DATASET, "*support_FP_analysis.nii.gz"))
         support_gt = [p.replace("support_FP_analysis.nii.gz", "seg.nii.gz") for p in support_predictions]
         support_roi = [p.replace("support_FP_analysis.nii.gz", "liver.nii.gz") for p in support_predictions]
         support_images_patches = torch.Tensor([])
@@ -154,20 +153,28 @@ class SupportPreprocessor:
             torch.index_select(labels, 0, torch.tensor(sampled_patches_indices)).to(self.device)
 
     @staticmethod
-    def _get_lesions_areas(support_labels_patches: Tensor) -> List[List]:
+    def _get_lesions_areas(support_labels_patches: Tensor) -> Tuple[List, List]:
         """
         This function gets the areas of the lesions from the support labels patches
         :param support_labels_patches: the labels of the support patches
         :return: a list of the areas of the lesions
         """
-        leasions_areas = []
-        lesios_indices = []
+        lesions_areas = []
+        lesions_indices = []
+        lesions = []
         for i, seg_patch in enumerate(support_labels_patches):
             mask = seg_patch.cpu().detach().numpy()
             labels = measure.label(mask, background=0)
-            leasions_areas.extend(
-                i for region in measure.regionprops(labels) if region.area > constants.MIN_LESION_AREA)
-        return leasions_areas, lesios_indices
+            # lesions.append(
+            #     (i, region.area) for region in measure.regionprops(labels) if region.area > constants.MIN_LESION_AREA)
+            for region in measure.regionprops(labels):
+                if region.area > constants.MIN_LESION_AREA:
+                    lesions.append((region.area, i))
+        ## kutiu: sorted the list by area to facilitate future looping
+        lesions_sorted = sorted(lesions)
+        lesions_areas = [a for a, _ in lesions_sorted]
+        lesions_indices = [i for _, i in lesions_sorted]
+        return lesions_areas, lesions_indices
 
     def _sample_lesions_from_gaussian_distribution(self, lesions_areas: List, lesions_indices: List) -> np.ndarray:
         """
@@ -180,14 +187,39 @@ class SupportPreprocessor:
         data_samples = np.array(lesions_areas)
         # Create a kernel density estimate (KDE) from the data
         kde = gaussian_kde(data_samples)
-        x_vals = np.linspace(min(data_samples), max(data_samples), 1000)
-        # Evaluate the PDF at the specified points
-        pdf_values = kde(x_vals)
-        # sample from the estimated density distribution
+        # Generate points along the x-axis for the PDF plot
+        bin_c, x_vals = np.histogram(data_samples, bins=np.arange(min(data_samples), max(data_samples) + 2))
+        nz_idx = np.nonzero(bin_c)[0]  # kutiu: arr of populated bins indices
+        nz_bin_c = bin_c[nz_idx]  # kutiu: arr of populated bins indices
+        # kutiu: buffers to integrate pdf between for each populated bin
+        bin_buffs = (x_vals[nz_idx[1:]] + x_vals[nz_idx[:-1]]).astype(float) / 2
+        # kutiu: main loop, iterating over every integer area 0 to max-buffer and integrating pdf
+        acc_pdf = np.zeros_like(nz_idx, 'float')
+        area_idx = 0
+        next_buff = bin_buffs[area_idx]
+        for area in range((1 + bin_buffs[-1]).astype(int)):
+            if area == next_buff:  # kutiu: current-bin is a buffer, its probability is to be split between populated-bin-neighbours
+                acc_pdf[area_idx] += 0.5 * kde(area)[0]
+                if area_idx + 1 < len(acc_pdf):
+                    acc_pdf[area_idx + 1] -= 0.5 * kde(area)[0]
+            if area >= next_buff:  # kutiu: current-bin is beyond buffer, update indicators accordingly
+                area_idx += 1
+                if area_idx < len(bin_buffs):
+                    next_buff = bin_buffs[area_idx]
+            acc_pdf[area_idx] += kde(area)[0]
+
+        acc_pdf[-1] = 1 - np.sum(acc_pdf[:-1])  # kutiu: largest area lesion is assumed to complement probability to 1
+        nz_bin_p = acc_pdf
+        nz_bin_p = nz_bin_p / nz_bin_c  # kutiu: normalize by the number of lesions sharing the bins probability
+
+        xvals_indices = [np.where(x_vals == area)[0][0] for area in
+                         data_samples]  # kutiu: assign each integer area (bin) with a corresponding per-lesion-probability
+        lesions_p = nz_bin_p[[np.where(nz_idx == xvals_idx)[0][0] for xvals_idx in
+                              xvals_indices]]  # kutiu: assign each lesion with its own probability
         np.random.seed(constants.RANDOM_SEED)
-        probabilities = pdf_values / np.sum(pdf_values)
-        drawn_indices = np.random.choice(len(x_vals), size=self.desired_support_size, replace=False, p=probabilities)
-        return np.array(lesions_indices)[drawn_indices]
+        drawn_indices = np.random.choice(len(data_samples), size=constants.NUM_OF_SAMPLED_PATCHES, replace=False,
+                                         p=lesions_p)  # kutiu: draw lesions from the sorted list
+        return np.array(lesions_indices)[drawn_indices]  # kutiu: respective lesion indices in the original dataset
 
     def _filter_support_patches_by_gaussian_kernel(self, patches: Tensor, labels: Tensor) -> tuple[Tensor, Tensor]:
         """
@@ -198,8 +230,10 @@ class SupportPreprocessor:
         """
         lesions_areas, lesions_indices = self._get_lesions_areas(labels)
         indices = self._sample_lesions_from_gaussian_distribution(lesions_areas, lesions_indices)
-        return torch.index_select(patches, 0, torch.tensor(indices).to(self.device)), \
-            torch.index_select(labels, 0, torch.tensor(indices).to(self.device))
+        # return (torch.index_select(patches, 0, torch.tensor(indices).to(self.device)),
+        #         torch.index_select(labels, 0, torch.tensor(indices).to(self.device)))
+        return torch.index_select(patches, 0, torch.tensor(indices)).to(self.device), \
+            torch.index_select(labels, 0, torch.tensor(indices)).to(self.device)
 
     def preprocess_to_patches(self, method: str) -> tuple[Tensor, Tensor]:
         """
@@ -215,12 +249,19 @@ class SupportPreprocessor:
                              f"patches found in {self.k_shots} scans.")
 
         if method == constants.GAUSSIAN_KERNEL:
-            self._filter_support_patches_by_gaussian_kernel(support_images_patches, support_labels_patches)
+            return self._filter_support_patches_by_gaussian_kernel(support_images_patches, support_labels_patches)
         elif method == constants.CLUSTERING:
             return self._filter_support_patches_by_clustering(support_images_patches, support_labels_patches,
-                                                              num_clusters=20)
+                                                              num_clusters=constants.NUM_OF_CLUSTERS)
         elif method == constants.NO_FILTER:
             return support_images_patches[:self.desired_support_size].to(self.device), \
                 support_labels_patches[:self.desired_support_size].to(self.device)
         else:
             raise ValueError(f"Provided method: {method} does not exist")
+
+    def get_support_filenames(self):
+        """
+        This function returns the filenames of the support set
+        :return: the filenames of the support set
+        """
+        return self.filenames
