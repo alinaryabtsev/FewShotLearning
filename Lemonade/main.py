@@ -1,25 +1,20 @@
-from Lemonade.datasets_loaders.liver_metastasis_dataset_3D import LiverTumorsDataset3D
 from VirtualRichard import VirtualRichard
 from SupportPreprocessor import SupportPreprocessor
 from UniverSegPedictor import UniverSegPredictor
-from datasets_loaders.liver_metastasis_dataset_3D import LiverTumorsDataset3D
 import constants
+from datasets_loaders.liver_metastasis_dataset_3D import LiverTumorsDataset3D
 from torch.utils.data import Dataset
-
 import os
-from monai.inferers import SliceInferer, PatchInferer, SlidingWindowSplitter, Inferer
 import torch
-
-os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
-import sys
-
-sys.path.append("/cs/casmip/alina.ryabtsev/FewShotLearning/")
 from torch import nn, Tensor
+import sys
 from Exceptions import LemonadeExceptions
 from typing import Tuple, List, Union
-
-sys.path.append('UniverSeg')
 from UniverSeg.universeg import universeg
+
+os.environ['CUDA_LAUNCH_BLOCKING'] = "1"
+sys.path.append("/cs/casmip/alina.ryabtsev/FewShotLearning/")
+sys.path.append('UniverSeg')
 
 
 def obtain_dataset_for_few_shot_learning(dataset_path: str) -> tuple[Tensor, Tensor, LiverTumorsDataset3D]:
@@ -30,8 +25,9 @@ def obtain_dataset_for_few_shot_learning(dataset_path: str) -> tuple[Tensor, Ten
         # extract to function from SupportPreprocessor
         support_preprocessor = SupportPreprocessor(d_support, constants.K_SHOTS, constants.DEVICE,
                                                    constants.NUM_OF_SAMPLED_PATCHES)
+        print(*support_preprocessor.get_support_filenames(), sep="\n")
         support_images_patches, support_labels_patches = support_preprocessor.preprocess_to_patches(
-            constants.CLUSTERING)
+            constants.SUPPORT_FILTER)
         return support_images_patches, support_labels_patches, d_query
     elif dataset_path == constants.LUNG_LESIONS_DATASET:
         raise NotImplementedError("lung lesions dataset is not implemented yet")
@@ -80,7 +76,8 @@ def main():
     # predicted annotations.
     model = get_universeg_model().to(constants.DEVICE)
     support_images_patches, support_labels_patches, d_query = obtain_dataset_for_few_shot_learning(
-        LIVER_LESIONS_DATASET)
+        constants.LIVER_LESIONS_DATASET)
+
     run_few_shot_learning_model(model, (support_images_patches, support_labels_patches), d_query)
 
 
