@@ -13,7 +13,7 @@ from skimage.util import view_as_windows
 from glob import glob
 import os
 import nibabel as nib
-from typing import List, Tuplesupport_analysis_100_clusters_k10
+from typing import List, Tuple
 
 
 class SupportPreprocessor:
