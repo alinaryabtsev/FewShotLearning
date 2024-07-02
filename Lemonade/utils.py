@@ -102,6 +102,20 @@ class SegmentationMetrics:
         return contour_scores
 
     @staticmethod
+    def calculate_contour_score_per_slice(prediction: np.array, GT_label: np.array,
+                                          variability_threshold: int = constants.VARIABILITY_THRESHOLD):
+        """
+        This function calculates the contour score of the model per slice. The score is calculated as follows:
+        contour score = 1 - (positive contour / GT contour) where the contour is 2D per slice
+        :param prediction: The tensor that contains prediction of the model
+        :param GT_label: The tensor that contains the ground truth label
+        :param variability_threshold: The threshold for the observer variability in terms of the contour (# of pixels)
+        :return: The average contour score per slice
+        """
+        for slice_pred, slice_GT in zip(prediction, GT_label):
+            yield SegmentationMetrics.calculate_contour_score(slice_pred, slice_GT, variability_threshold)
+
+    @staticmethod
     def __obj_surface_distances(result, reference, voxelspacing=None, connectivity=1):
         """
         The distances between the surface voxel between all corresponding binary
