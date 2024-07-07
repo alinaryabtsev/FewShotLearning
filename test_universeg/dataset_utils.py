@@ -5,7 +5,8 @@ import nibabel as nib
 from skimage.transform import resize
 from tqdm import tqdm
 import einops as E
-
+from skimage.measure import label, regionprops, regionprops_table
+import json
 
 SCANS_FORMAT = "_scan.nii.gz"
 SEGMENTATIONS_FORMAT = "_seg.nii.gz"
@@ -53,13 +54,30 @@ def preprocess_scan_and_segmentation(scan, segmentation, split, scan_resize, cli
 
 
 def load_scans(split, split_i, N, path, resize_scan=True, half_precision=False):
-    rng = np.random.default_rng(42)
+    seed = 10
+    rng = np.random.default_rng(seed)
     p = rng.permutation(N)
     data = []
     scans = sorted(glob(os.path.join(path, f"*{SCANS_FORMAT}")))
     scans = [scans[i] for i in p]
     segmentations = sorted(glob(os.path.join(path, f"*{SEGMENTATIONS_FORMAT}")))
     segmentations = [segmentations[i] for i in p]
+
+    if (True): # analyze lesions no.
+        lesions_no = []
+        for seg in segmentations:
+            img = nib.load(seg)
+            img = img.get_fdata()
+
+            img, num_ccs = label(img, return_num=True)
+            lesions_no.append({"name": seg, "count": num_ccs})
+
+        tmp = [{ii+1: x} for ii,x in enumerate(lesions_no)]
+
+        top_path = "/cs/usr/kutiu/casmip/fsl/FewShotLearning/test_universeg/results_universeg"
+        with open(top_path + "/seed"+str(seed)+"_lesions_no.json", "w") as json_file:
+            json.dump(tmp, json_file)
+
 
     if split == "support":
         iter_data = lambda: zip(scans[:split_i], segmentations[:split_i])
