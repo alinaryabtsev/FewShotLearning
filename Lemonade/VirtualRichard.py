@@ -34,17 +34,19 @@ class VirtualRichard:
             [DetectionMetrics.calculate_FN_score(p, g) for p, g in zip(predictions, GT_labels)]
 
     @staticmethod
-    def evaluate_segmentation(predictions: np.array, GT_labels: np.array):
+    def evaluate_segmentation(predictions: np.array, GT_labels: np.array, variability_th: int):
         """
         This function evaluates the segmentation of the model and returns a score. The score is calculated as follows:
         countour score = 1 - (positive countour / GT contour)
         relative volume difference score = abs(GT volume - predicted volume) / GT volume
         :param predictions: The tensor that contains predictions of the model
         :param GT_labels: The tensor that contains the ground truth labels
+        :param variability_th: The threshold that determines the variability of the segmentation to the GT
         :return: A tuple of scores: [countour score, relative volume difference score
         """
-        return [SegmentationMetrics.calculate_contour_score(p, g) for p, g in zip(predictions, GT_labels)], \
-            [list(SegmentationMetrics.calculate_contour_score_per_slice(p, g)) for p, g in zip(predictions, GT_labels)]
+        return [SegmentationMetrics.calculate_contour_score(p, g, variability_th) for p, g in zip(predictions, GT_labels)], \
+            [list(SegmentationMetrics.calculate_contour_score_per_slice(p, g, variability_th)) for p, g in
+             zip(predictions, GT_labels)]
 
     @staticmethod
     def resegment(predictions: np.array, GT_labels: np.array):
