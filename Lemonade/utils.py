@@ -112,8 +112,12 @@ class SegmentationMetrics:
         :param variability_threshold: The threshold for the observer variability in terms of the contour (# of pixels)
         :return: The average contour score per slice
         """
-        for slice_pred, slice_GT in zip(prediction, GT_label):
-            yield SegmentationMetrics.calculate_contour_score(slice_pred, slice_GT, variability_threshold)
+        for i in range(prediction.shape[-1]):
+            slice_pred = prediction[..., i]
+            slice_GT = GT_label[..., i]
+            con = SegmentationMetrics.calculate_contour_score(slice_pred, slice_GT, variability_threshold)
+            if len(con) != 0:
+                yield np.mean(con)
 
     @staticmethod
     def __obj_surface_distances(result, reference, voxelspacing=None, connectivity=1):
@@ -121,7 +125,7 @@ class SegmentationMetrics:
         The distances between the surface voxel between all corresponding binary
         objects in result and reference. Correspondence is defined as unique and at least one voxel overlap.
         """
-        sds = list()
+        sds = []
         labelmap1, labelmap2, _a, _b, mapping = SegmentationMetrics.__distinct_binary_object_correspondences(
             result, reference, connectivity)
         slicers1 = find_objects(labelmap1)
@@ -139,9 +143,10 @@ class SegmentationMetrics:
         Joins two windows (defined by tuple of slices) such that their maximum
         combined extend is covered by the new returned window.
         """
-        res = []
-        for s1, s2 in zip(w1, w2):
-            res.append(slice(min(s1.start, s2.start), max(s1.stop, s2.stop)))
+        res = [
+            slice(min(s1.start, s2.start), max(s1.stop, s2.stop))
+            for s1, s2 in zip(w1, w2)
+        ]
         return tuple(res)
 
     @staticmethod
@@ -169,22 +174,21 @@ class SegmentationMetrics:
 
         # find all overlaps from labelmap2 to labelmap1; collect one-to-one relationships and store all one-two-many for later processing
         slicers = find_objects(labelmap2)  # get windows of labelled objects
-        mapping = dict()  # mappings from labels in labelmap2 to corresponding object labels in labelmap1
+        mapping = {}  # mappings from labels in labelmap2 to corresponding object labels in labelmap1
         used_labels = set()  # set to collect all already used labels from labelmap2
-        one_to_many = list()  # list to collect all one-to-many mappings
+        one_to_many = []
         for l1id, slicer in enumerate(slicers):  # iterate over object in labelmap2 and their windows
             l1id += 1  # labelled objects have ids sarting from 1
             bobj = (l1id) == labelmap2[slicer]  # find binary object corresponding to the label1 id in the segmentation
             l2ids = np.unique(labelmap1[slicer][
                                      bobj])  # extract all unique object identifiers at the corresponding positions in the reference (i.e. the mapping)
-            l2ids = l2ids[0 != l2ids]  # remove background identifiers (=0)
-            if 1 == len(
-                    l2ids):  # one-to-one mapping: if target label not already used, add to final list of object-to-object mappings and mark target label as used
+            l2ids = l2ids[l2ids != 0]
+            if len(l2ids) == 1:  # one-to-one mapping: if target label not already used, add to final list of object-to-object mappings and mark target label as used
                 l2id = l2ids[0]
-                if not l2id in used_labels:
+                if l2id not in used_labels:
                     mapping[l1id] = l2id
                     used_labels.add(l2id)
-            elif 1 < len(l2ids):  # one-to-many mapping: store relationship for later processing
+            elif len(l2ids) > 1:  # one-to-many mapping: store relationship for later processing
                 one_to_many.append((l1id, set(l2ids)))
 
         # process one-to-many mappings, always choosing the one with the least labelmap2 correspondences first
@@ -193,7 +197,7 @@ class SegmentationMetrics:
                            one_to_many]  # remove already used ids from all sets
             one_to_many = [x for x in one_to_many if x[1]]  # remove empty sets
             one_to_many = sorted(one_to_many, key=lambda x: len(x[1]))  # sort by set length
-            if 0 == len(one_to_many):
+            if len(one_to_many) == 0:
                 break
             l2id = one_to_many[0][1].pop()  # select an arbitrary target label id from the shortest set
             mapping[one_to_many[0][0]] = l2id  # add to one-to-one mappings
@@ -246,8 +250,7 @@ def approximate_diameter(tumor_volume):
     :param tumor_volume: the volume of the tumor
     """
     r = ((3 * tumor_volume) / (4 * np.pi)) ** (1 / 3)
-    diameter = 2 * r
-    return diameter
+    return 2 * r
 
 
 def get_connected_components(map):
@@ -285,7 +288,10 @@ def mask_by_diameter(mask, voxel_volume, diameter):
             tumors_indices.append(i)
             tumors_with_diameter_masked[current_tumor] = 1
     tumors_with_diameter_labeled = measure.label(tumors_with_diameter_masked)
-    tumors_with_diameter_labeled = tuple((tumors_with_diameter_labeled, tumors_with_diameter_labeled.max()))
+    tumors_with_diameter_labeled = (
+        tumors_with_diameter_labeled,
+        tumors_with_diameter_labeled.max(),
+    )
     return tumors_with_diameter_labeled, tumors_with_diameter_masked, tumors_indices
 
 
@@ -317,4 +323,39 @@ def postprocess_predictions(predictions: List[np.array], save_postprocessed: boo
                 raise ValueError("Affines and filenames should be provided to save the postprocessed predictions")
             nib.save(nib.Nifti1Image(pred.astype("float64"), predictions_affines[i]),
                      predictions_filenames[i].replace(".nii.gz", "_postprocessed.nii.gz"))
+    return postprocessed_predictions
+
+
+def postprocess_predictions_per_slice(predictions: List[np.array], save_postprocessed: bool = False,
+                                      predictions_affines: List[np.array] = None,
+                                      predictions_filenames: List[str] = None) -> np.array:
+    """
+    This function postprocessors the binary predictions of the model, per slice. It performs the following steps:
+    1. Load the predictions
+    2. Postprocess the predictions as following:
+        2.1. Remove small connected components
+        2.2. Fill holes in the binary mask
+        2.3. Remove small connected components again
+    3. Save the postprocessed predictions if needed
+    4. Return the postprocessor predictions
+    :param predictions: list of predictions arrays
+    :param save_postprocessed: a boolean whether to save the postprocessed predictions or not
+    :param predictions_affines: list of affine matrices of the predictions
+    :param predictions_filenames: list of filenames of the predictions
+    :return: The postprocessed predictions arrays
+    """
+    postprocessed_predictions = []
+    for i, pred in tqdm(enumerate(predictions), total=len(predictions)):
+        post_pred = []
+        for j in range(pred.shape[-1]):
+            slice_pred = binary_fill_holes(pred[..., j])
+            slice_pred = remove_small_objects(slice_pred).astype(slice_pred.dtype)
+            post_pred.append(slice_pred)
+        postprocessed_predictions.append(np.array(post_pred).astype(pred.dtype).reshape(pred.shape))
+        if save_postprocessed:
+            if predictions_affines is None or predictions_filenames is None:
+                raise ValueError("Affines and filenames should be provided to save the postprocessed predictions")
+            for j, slice_pred in enumerate(post_pred):
+                nib.save(nib.Nifti1Image(slice_pred.astype("float64"), predictions_affines[i]),
+                         predictions_filenames[i].replace(".nii.gz", f"_postprocessed_{j}.nii.gz"))
     return postprocessed_predictions

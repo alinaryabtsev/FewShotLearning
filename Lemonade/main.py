@@ -74,6 +74,7 @@ def main():
     # 6. Perform the last two steps until fully supervised.
     # Note: Virtual Richard should comapare "times" at each execution, between annotaing from scratch and fixing
     # predicted annotations.
+    print(f"{'*' * 10} Starting Few Shot Learning for {constants.SAVE_NAME} {'*' * 10}")
     model = get_universeg_model().to(constants.DEVICE)
     support_images_patches, support_labels_patches, d_query = obtain_dataset_for_few_shot_learning(
         constants.LIVER_LESIONS_DATASET)
